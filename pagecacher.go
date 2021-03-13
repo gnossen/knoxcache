@@ -59,8 +59,12 @@ const createPageText = headerText + createPageFormText + footerText;
 
 // URL is assumed to be a normalized absolute URL.
 
-func translateAbsoluteUrlToCachedUrl(toTranslate string) string {
-    return baseName + encoder.Encode(toTranslate)
+func translateAbsoluteUrlToCachedUrl(toTranslate string) (string, error) {
+    encoded, err := encoder.Encode(toTranslate)
+    if err != nil {
+        return "", nil
+    }
+    return baseName + encoded, nil
 }
 
 // Should we do a sha256 hash or what?
@@ -75,7 +79,11 @@ func translateCachedUrl(toTranslate string, baseUrl *url.URL ) (string, error) {
     } else {
         absoluteUrl = parsedUrl
     }
-    return translateAbsoluteUrlToCachedUrl(absoluteUrl.String()), nil
+    translated, err := translateAbsoluteUrlToCachedUrl(absoluteUrl.String())
+    if err != nil {
+        return "", err
+    }
+    return translated, nil
 }
 
 func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
@@ -85,6 +93,7 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
                 // TODO: Modify the link properly.
                 // TODO: Add to queue.
                 translated, err := translateCachedUrl(node.Attr[i].Val, baseUrl)
+                log.Printf("Cached URL as (%d) %s\n", len(translated), translated)
                 if err != nil {
                     fmt.Println("Failed to parse as URL.")
                     continue
@@ -96,7 +105,10 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
 }
 
 func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
-    hashedUrl := encoder.Encode(srcUrl)
+    hashedUrl, err := encoder.Encode(srcUrl)
+    if err != nil {
+        return "", err
+    }
     resp, err := http.Get(srcUrl)
     if err != nil {
         log.Println("Failed to get url %s: %v", srcUrl, err)
@@ -137,7 +149,11 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     }
     visitNode(doc)
     html.Render(outfile, doc)
-    return translateAbsoluteUrlToCachedUrl(srcUrl), nil
+    translated, err := translateAbsoluteUrlToCachedUrl(srcUrl)
+    if err != nil {
+        return "", err
+    }
+    return translated, nil
 }
 
 func handlePageRequest(w http.ResponseWriter, r *http.Request) {
