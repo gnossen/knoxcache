@@ -13,6 +13,7 @@ type Datastore interface {
     Open(hashedUrl string) (io.ReadCloser, error)
 
     // Resource must not exist when this method is called.
+    // TODO: May want to add metadata as well, including source URL and cache timestamp.
     Create(hashedUrl string) (io.WriteCloser, error)
 
     // TODO: Might need to add Close method here as well once we add a networked
@@ -26,7 +27,7 @@ type FileDatastore struct {
 
 func NewFileDatastore(rootPath string) FileDatastore {
     // Must end in a slash.
-    if !strings.HasSuffix(rootPath, "/") {
+    if rootPath != "" && !strings.HasSuffix(rootPath, "/") {
        rootPath += "/"
     }
     // TODO: Check if it exists first.
@@ -38,8 +39,9 @@ func (ds FileDatastore) translateUrlToFilePath(hashedUrl string) string {
 }
 
 func (ds FileDatastore) Exists(hashedUrl string) (bool, error) {
-    _, err := os.Stat(ds.translateUrlToFilePath(hashedUrl))
-    if err != nil {
+    filepath := ds.translateUrlToFilePath(hashedUrl)
+    _, err := os.Stat(filepath)
+    if err == nil {
         return true, nil
     }
     if os.IsNotExist(err) {
