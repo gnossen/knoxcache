@@ -30,6 +30,7 @@ var linkAttrs = map[string][]string{
     "link": []string{"href"},
     "meta": []string{"content"},
     "script": []string{"src"},
+    "img": []string{"src"},
 }
 
 // TODO: Pull out into separate template file.
@@ -105,7 +106,7 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
 }
 
 func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
-    hashedUrl, err := encoder.Encode(srcUrl)
+    encodedUrl, err := encoder.Encode(srcUrl)
     if err != nil {
         return "", err
     }
@@ -116,10 +117,10 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     }
     // TODO: Inspect the MIME type and respond appropriately.
 
-    log.Printf("Caching %s as %s\n", srcUrl, hashedUrl)
-    outfile, err := ds.Create(hashedUrl)
+    log.Printf("Caching %s as %s\n", srcUrl, encodedUrl)
+    outfile, err := ds.Create(encodedUrl)
     if err != nil {
-        log.Println("Failed to open page %s for writing: %v", hashedUrl, err)
+        log.Println("Failed to open page %s for writing: %v", encodedUrl, err)
         return "", err
     }
     defer outfile.Close()
@@ -156,6 +157,19 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     return translated, nil
 }
 
+func serveExistingPage(encodedUrl string, w http.ResponseWriter) {
+    f, openErr := ds.Open(encodedUrl)
+    if openErr != nil {
+        log.Printf("Failed to open file for hash %s: %v", encodedUrl, openErr)
+        msg := fmt.Sprintf("Internal error: %v\n", openErr)
+        w.WriteHeader(500)
+        io.WriteString(w, msg)
+        return
+    }
+    defer f.Close()
+    io.Copy(w, f)
+}
+
 func handlePageRequest(w http.ResponseWriter, r *http.Request) {
     // Strip the slash
     prefix := "/c/"
@@ -164,11 +178,9 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
         io.WriteString(w, "Bad URI.")
         return
     }
-    hashedUrl := r.URL.Path[len(prefix):]
+    encodedUrl := r.URL.Path[len(prefix):]
 
-    // TODO: Try to accept short links.
-
-    exists, err := ds.Exists(hashedUrl)
+    exists, err := ds.Exists(encodedUrl)
 
     if err != nil {
         msg := fmt.Sprintf("Internal error: %v\n", err)
@@ -178,22 +190,27 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
     }
 
     if !exists {
-        // TODO: Something prettier than this.
-        w.WriteHeader(404)
-        io.WriteString(w, "<h1>Not Found.</h1>\n")
+        decodedUrl, err := encoder.Decode(encodedUrl)
+        if err != nil {
+            msg := fmt.Sprintf("Could not interpret requested url '%s'", encodedUrl)
+            w.WriteHeader(400)
+            io.WriteString(w, msg)
+            return
+        }
+        _, err = cachePage(decodedUrl, ds)
+        if err != nil {
+            // TODO: Figure out how to dedupe this.
+            w.WriteHeader(500)
+            msg := fmt.Sprintf("Failed to cache page: %v", err)
+            io.WriteString(w, msg)
+            return
+        }
+        serveExistingPage(encodedUrl, w)
+        return
+    } else {
+        serveExistingPage(encodedUrl, w)
         return
     }
-
-    f, openErr := ds.Open(hashedUrl)
-    if openErr != nil {
-        log.Printf("Failed to open file for hash %s: %v", hashedUrl, openErr)
-        msg := fmt.Sprintf("Internal error: %v\n", openErr)
-        w.WriteHeader(500)
-        io.WriteString(w, msg)
-        return
-    }
-    defer f.Close()
-    io.Copy(w, f)
 }
 
 func queryError(w http.ResponseWriter) {
@@ -221,7 +238,7 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
                 io.WriteString(w, msg)
                 return
             }
-            successMsg := fmt.Sprintf("<br />.Created <a href=\"%s\">%s</a>\n",
+            successMsg := fmt.Sprintf("<br />Created <a href=\"%s\">%s</a>\n",
                 cachedUrl, cachedUrl)
             w.WriteHeader(200)
             io.WriteString(w, headerText)
