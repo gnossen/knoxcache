@@ -2,8 +2,7 @@ package main
 
 import (
     "github.com/gnossen/cache/datastore"
-    "crypto/sha256"
-    "encoding/base32"
+    enc "github.com/gnossen/cache/encoder"
     "net/http"
     "net/url"
     "golang.org/x/net/html"
@@ -17,16 +16,15 @@ import (
 
 const mainUrl = "https://docs.openshift.com/container-platform/3.4/install_config/upgrading/manual_upgrades.html"
 
-// TODO: Programmatically generate.
-const outFileName = "cached.html"
-
 // TODO: Get this from config somehow.
 // TODO: Change to http://c/
 const baseName = "http://localhost:8080/c/"
 
 // TODO: Make storage location configurable.
 var ds = datastore.NewFileDatastore("")
+var encoder = enc.NewDefaultEncoder()
 
+// TODO: img src
 var linkAttrs = map[string][]string{
     "a": []string{"href"},
     "link": []string{"href"},
@@ -34,6 +32,7 @@ var linkAttrs = map[string][]string{
     "script": []string{"src"},
 }
 
+// TODO: Pull out into separate template file.
 // TODO: Make pretty.
 const headerText = `
 <html>
@@ -55,15 +54,13 @@ const footerText = `
 
 const createPageText = headerText + createPageFormText + footerText;
 
+// TODO: Need a bijective encoding scheme so that we can pre-translate the links,
+// and do just-in-time caching.
+
 // URL is assumed to be a normalized absolute URL.
-func hashUrl(url string) string {
-    bytes := sha256.Sum256([]byte(url))
-    rawEncoding :=  base32.StdEncoding.EncodeToString(bytes[:])
-    return strings.ToLower(rawEncoding[:len(rawEncoding)-4])
-}
 
 func translateAbsoluteUrlToCachedUrl(toTranslate string) string {
-    return baseName + hashUrl(toTranslate)
+    return baseName + encoder.Encode(toTranslate)
 }
 
 // Should we do a sha256 hash or what?
@@ -99,7 +96,7 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
 }
 
 func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
-    hashedUrl := hashUrl(srcUrl)
+    hashedUrl := encoder.Encode(srcUrl)
     resp, err := http.Get(srcUrl)
     if err != nil {
         log.Println("Failed to get url %s: %v", srcUrl, err)
@@ -110,7 +107,7 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     log.Printf("Caching %s as %s\n", srcUrl, hashedUrl)
     outfile, err := ds.Create(hashedUrl)
     if err != nil {
-        log.Println("Failed to open file %s: %v", outFileName, err)
+        log.Println("Failed to open page %s for writing: %v", hashedUrl, err)
         return "", err
     }
     defer outfile.Close()
