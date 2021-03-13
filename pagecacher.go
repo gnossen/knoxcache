@@ -1,6 +1,7 @@
 package main
 
 import (
+    "github.com/gnossen/cache/datastore"
     "crypto/sha256"
     "encoding/base32"
     "net/http"
@@ -11,13 +12,15 @@ import (
     "fmt"
 )
 
+// TODO: How do we take time slicing into account?
+
 const mainUrl = "https://docs.openshift.com/container-platform/3.4/install_config/upgrading/manual_upgrades.html"
 
 // TODO: Programmatically generate.
 const outFileName = "cached.html"
 
 // TODO: Get this from config somehow.
-const baseName = "http://cache/c/"
+const baseName = "http://c/"
 
 var linkAttrs = map[string][]string{
     "a": []string{"href"},
@@ -67,15 +70,16 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
 }
 
 // TODO: Return err.
-func cachePage(urlToCache string) {
+func cachePage(urlToCache string, ds datastore.Datastore) {
     resp, err := http.Get(urlToCache)
     if err != nil {
         println("Failed to get url %s: %v", urlToCache, err)
         os.Exit(1)
     }
     // TODO: Inspect the MIME type and respond appropriately.
-    // TODO: Add a database backend.
-    outfile, err := os.Create(outFileName)
+
+    // TODO: Make sure it doesn't exist first.
+    outfile, err := ds.Create(outFileName)
     if err != nil {
         println("Failed to open file %s: %v", outFileName, err)
         os.Exit(1)
@@ -110,5 +114,6 @@ func cachePage(urlToCache string) {
 }
 
 func main() {
-    cachePage(mainUrl)
+    ds := datastore.NewFileDatastore("./")
+    cachePage(mainUrl, ds)
 }
