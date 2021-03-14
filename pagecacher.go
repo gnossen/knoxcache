@@ -167,6 +167,7 @@ func serveExistingPage(encodedUrl string, w http.ResponseWriter) {
         return
     }
     defer f.Close()
+    // TODO: Copy Headers as well.
     io.Copy(w, f)
 }
 

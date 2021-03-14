@@ -1,16 +1,29 @@
 package datastore
 
 import (
+    "bytes"
     "io"
     "os"
     "strings"
+    "net/http"
+    "fmt"
+    "bufio"
 )
+
+type HeaderReader interface {
+    io.ReadCloser
+}
+
+type ResourceReader interface {
+    io.ReadCloser
+    Headers() *http.Header
+}
 
 type Datastore interface {
     Exists(hashedUrl string) (bool, error)
 
     // Resource must exist when this method is called.
-    Open(hashedUrl string) (io.ReadCloser, error)
+    Open(hashedUrl string) (ResourceReader, error)
 
     // Resource must not exist when this method is called.
     // TODO: May want to add metadata as well, including source URL and cache timestamp.
@@ -19,6 +32,86 @@ type Datastore interface {
     // TODO: Might need to add Close method here as well once we add a networked
     // db.
 
+}
+
+func splitHeaderPair(data []byte, atEOF bool) (advance int, token []byte, err error) {
+    if atEOF && len(data) == 0 {
+        return 0, nil, nil
+    }
+
+    if i := bytes.Index(data, []byte(":")); i >= 0 {
+        return i + 1, data[:i], nil
+    }
+
+    if atEOF {
+        return len(data), data, nil
+    }
+
+    return
+}
+
+type headerParseError struct {
+    msg string
+}
+
+func (e headerParseError) Error() string {
+    return e.msg
+}
+
+// Reads headers in wire format exactly of length n into the header.
+func readHeaders(reader io.Reader) (*http.Header, error) {
+    var headers http.Header
+    scanner := bufio.NewScanner(reader)
+    for scanner.Scan() {
+        pairBytes := scanner.Bytes()
+        pairScanner := bufio.NewScanner(bytes.NewReader(pairBytes))
+        pairScanner.Split(splitHeaderPair)
+        var pairElems [2]string
+        for i := 0; i < 2; i++ {
+           if !scanner.Scan() {
+               return nil, headerParseError{fmt.Sprintf("Did not find a colon in header pair: %s", string(pairBytes))}
+           }
+           pairElems[i] = pairScanner.Text()
+        }
+        if scanner.Scan() {
+            return nil, headerParseError{fmt.Sprintf("Too many colons in header pair: %s", string(pairBytes))}
+        }
+        key := pairElems[0]
+        value := pairElems[0]
+        currentValues, ok := headers[key]
+        if !ok {
+            headers[key] = []string{value}
+        } else {
+            headers[key] = append(currentValues, value)
+        }
+    }
+    return &headers, nil
+}
+
+type FileResourceReader struct {
+    f *os.File
+    headers *http.Header
+}
+
+func newFileResourceReader(f *os.File) (FileResourceReader, error) {
+    // Read all headers and populate them in-memory.
+    headers, err := readHeaders(f)
+    if err != nil {
+        return FileResourceReader{nil, &http.Header{}}, err
+    }
+    return FileResourceReader{f, headers}, nil
+}
+
+func (rr FileResourceReader) Read(b []byte) (int, error) {
+    return rr.f.Read(b)
+}
+
+func (rr FileResourceReader) Close() error {
+    return rr.f.Close()
+}
+
+func (rr FileResourceReader) Headers() *http.Header {
+    return rr.headers
 }
 
 type FileDatastore struct {
@@ -50,12 +143,12 @@ func (ds FileDatastore) Exists(hashedUrl string) (bool, error) {
     return false, err
 }
 
-func (ds FileDatastore) Open(hashedUrl string) (io.ReadCloser, error) {
+func (ds FileDatastore) Open(hashedUrl string) (ResourceReader, error) {
     f, err := os.Open(ds.translateUrlToFilePath(hashedUrl))
     if err != nil {
         return nil, err
     }
-    return f, nil
+    return newFileResourceReader(f)
 }
 
 func (ds FileDatastore) Create(hashedUrl string) (io.WriteCloser, error) {
