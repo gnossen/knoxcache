@@ -18,6 +18,14 @@ go_library(
    importpath = "github.com/gnossen/cache/datastore",
 )
 
+go_test(
+   name = "datastore_test",
+   srcs = [
+        "datastore_test.go",
+        "datastore.go"
+   ],
+)
+
 go_binary(
     name = "pagecacher",
     srcs = [

@@ -8,6 +8,7 @@ import (
     "net/http"
     "fmt"
     "bufio"
+    "encoding/binary"
 )
 
 type HeaderReader interface {
@@ -60,24 +61,28 @@ func (e headerParseError) Error() string {
 
 // Reads headers in wire format exactly of length n into the header.
 func readHeaders(reader io.Reader) (*http.Header, error) {
-    var headers http.Header
+    headers := make(http.Header)
     scanner := bufio.NewScanner(reader)
     for scanner.Scan() {
         pairBytes := scanner.Bytes()
+        if len(pairBytes) == 0 {
+            // Empty line.
+            break
+        }
         pairScanner := bufio.NewScanner(bytes.NewReader(pairBytes))
         pairScanner.Split(splitHeaderPair)
         var pairElems [2]string
         for i := 0; i < 2; i++ {
-           if !scanner.Scan() {
+           if !pairScanner.Scan() {
                return nil, headerParseError{fmt.Sprintf("Did not find a colon in header pair: %s", string(pairBytes))}
            }
            pairElems[i] = pairScanner.Text()
         }
-        if scanner.Scan() {
+        if pairScanner.Scan() {
             return nil, headerParseError{fmt.Sprintf("Too many colons in header pair: %s", string(pairBytes))}
         }
-        key := pairElems[0]
-        value := pairElems[0]
+        key := strings.TrimRight(pairElems[0], " \t")
+        value := strings.TrimLeft(pairElems[1], " \t")
         currentValues, ok := headers[key]
         if !ok {
             headers[key] = []string{value}
@@ -93,9 +98,34 @@ type FileResourceReader struct {
     headers *http.Header
 }
 
+type fileHeaderError struct {
+    filename string
+}
+
+func (e fileHeaderError) Error() string {
+    return fmt.Sprintf("File %s did not have mandatory 8 byte header. Perhaps it was truncated?", e.filename)
+}
+
 func newFileResourceReader(f *os.File) (FileResourceReader, error) {
-    // Read all headers and populate them in-memory.
+    // Read 8-byte header length.
+    buf := []byte{0, 0, 0, 0, 0, 0, 0}
+    n, err := f.Read(buf)
+    if err != nil {
+        return FileResourceReader{nil, &http.Header{}}, err
+    }
+    if n != len(buf) {
+        return FileResourceReader{nil, &http.Header{}}, fileHeaderError{f.Name()}
+    }
+    headerLength := binary.LittleEndian.Uint64(buf)
+
+    // Read headers
     headers, err := readHeaders(f)
+    if err != nil {
+        return FileResourceReader{nil, &http.Header{}}, err
+    }
+
+    // Seek to beginning of content.
+    _, err = f.Seek(int64(headerLength) + 8, 0)
     if err != nil {
         return FileResourceReader{nil, &http.Header{}}, err
     }
