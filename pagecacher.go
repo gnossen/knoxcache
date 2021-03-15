@@ -105,13 +105,20 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
     }
 }
 
-func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
+func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string, error) {
     encodedUrl, err := encoder.Encode(srcUrl)
     if err != nil {
         return "", err
     }
-    // TODO: Proxy the user's browser's user agent string.
-    resp, err := http.Get(srcUrl)
+    client := &http.Client{}
+    req, err := http.NewRequest("GET", srcUrl, nil)
+    if err != nil {
+        return "", err
+    }
+    if userAgent != "" {
+        req.Header.Add("User-Agent", userAgent)
+    }
+    resp, err := client.Do(req)
     if err != nil {
         log.Printf("Failed to get url %s: %v\n", srcUrl, err)
         return "", err
@@ -229,7 +236,7 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
             io.WriteString(w, msg)
             return
         }
-        _, err = cachePage(decodedUrl, ds)
+        _, err = cachePage(decodedUrl, ds, r.Header.Get("User-Agent"))
         if err != nil {
             // TODO: Figure out how to dedupe this.
             w.WriteHeader(500)
@@ -263,7 +270,7 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
             return
         } else {
             requestedUrl := requestedUrls[0]
-            cachedUrl, err := cachePage(requestedUrl, ds)
+            cachedUrl, err := cachePage(requestedUrl, ds, r.Header.Get("User-Agent"))
             if err != nil {
                 w.WriteHeader(500)
                 msg := fmt.Sprintf("Failed to cache page: %v", err)
