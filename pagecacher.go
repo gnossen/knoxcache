@@ -10,6 +10,7 @@ import (
     "strings"
     "fmt"
     "log"
+    "mime"
 )
 
 // TODO: How do we take time slicing into account?
@@ -109,6 +110,7 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     if err != nil {
         return "", err
     }
+    // TODO: Proxy the user's browser's user agent string.
     resp, err := http.Get(srcUrl)
     if err != nil {
         log.Printf("Failed to get url %s: %v\n", srcUrl, err)
@@ -129,15 +131,13 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
         return "", parseErr
     }
 
-    var visitNode func(node *html.Node)
-    visitNode = func(node *html.Node) {
-        if node.Type == html.ElementNode {
-            if _, ok := linkAttrs[node.Data]; ok {
-                modifyLink(node.Data, node, parsedUrl)
-            }
-        }
-        for c := node.FirstChild; c != nil; c = c.NextSibling {
-            visitNode(c)
+    contentType := "text/html"
+    rawContentType := resp.Header.Get("Content-Type")
+    if rawContentType != "" {
+        mediaType, _, err := mime.ParseMediaType(rawContentType)
+        // If we cannot parse the MIME type, assume HTML.
+        if err == nil {
+            contentType = mediaType
         }
     }
 
@@ -148,13 +148,33 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     }
 
     resourceWriter.WriteHeaders(&resp.Header)
-    doc, err := html.Parse(resp.Body)
-    if err != nil {
-        log.Println("Failed to parse HTML: %v", err)
-        return "", err
+
+    if contentType == "text/html" {
+        var visitNode func(node *html.Node)
+        visitNode = func(node *html.Node) {
+            if node.Type == html.ElementNode {
+                if _, ok := linkAttrs[node.Data]; ok {
+                    modifyLink(node.Data, node, parsedUrl)
+                }
+            }
+            for c := node.FirstChild; c != nil; c = c.NextSibling {
+                visitNode(c)
+            }
+        }
+
+        doc, err := html.Parse(resp.Body)
+        if err != nil {
+            return "", err
+        }
+
+        visitNode(doc)
+        html.Render(resourceWriter, doc)
+    } else {
+        log.Printf("  Saving as %s\n", contentType)
+        io.Copy(resourceWriter, resp.Body)
     }
-    visitNode(doc)
-    html.Render(resourceWriter, doc)
+    // TODO: Add special handler for CSS that parses and replaces references.
+
     translated, err := translateAbsoluteUrlToCachedUrl(srcUrl)
     if err != nil {
         return "", err
