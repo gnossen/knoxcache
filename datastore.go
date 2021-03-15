@@ -9,6 +9,8 @@ import (
     "fmt"
     "bufio"
     "encoding/binary"
+    "encoding/hex"
+    "crypto/sha512"
 )
 
 type HeaderReader interface {
@@ -227,8 +229,13 @@ func NewFileDatastore(rootPath string) FileDatastore {
     return FileDatastore{rootPath}
 }
 
+// TODO: Filesystems have a hard limit on length of filenames. Need to shorten
+// by, e.g. hashing.
 func (ds FileDatastore) translateUrlToFilePath(hashedUrl string) string {
-    return ds.rootPath + hashedUrl
+    h := sha512.New()
+    h.Write([]byte(hashedUrl))
+    fileName := hex.EncodeToString(h.Sum(nil))
+    return ds.rootPath + fileName
 }
 
 func (ds FileDatastore) Exists(hashedUrl string) (bool, error) {
