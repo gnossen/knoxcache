@@ -12,11 +12,13 @@ func TestReadHeaders(t *testing.T) {
         "a": []string{"b", "c"},
         "d": []string{"e"},
         "f": []string{"g"},
+        "h": []string{"i : j"},
     }
     inputString := `a : b
 d : e
 a: c
 f : g
+h : i : j
 
 foo`
     reader := bytes.NewReader([]byte(inputString))

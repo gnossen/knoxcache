@@ -15,9 +15,18 @@ type HeaderReader interface {
     io.ReadCloser
 }
 
+// TODO: May want to add metadata as well, including source URL and cache timestamp.
 type ResourceReader interface {
     io.ReadCloser
     Headers() *http.Header
+}
+
+type ResourceWriter interface {
+    io.WriteCloser
+
+    // WriteHeaders must be called before Write, otherwise headers will be
+    // assumed to be empty.
+    WriteHeaders(headers *http.Header) error
 }
 
 type Datastore interface {
@@ -27,8 +36,7 @@ type Datastore interface {
     Open(hashedUrl string) (ResourceReader, error)
 
     // Resource must not exist when this method is called.
-    // TODO: May want to add metadata as well, including source URL and cache timestamp.
-    Create(hashedUrl string) (io.WriteCloser, error)
+    Create(hashedUrl string) (ResourceWriter, error)
 
     // TODO: Might need to add Close method here as well once we add a networked
     // db.
@@ -59,6 +67,8 @@ func (e headerParseError) Error() string {
     return e.msg
 }
 
+// TODO: Modify to use our own buffer instead of bufio so that we can guarantee
+// that we only read up to n characters.
 // Reads headers in wire format exactly of length n into the header.
 func readHeaders(reader io.Reader) (*http.Header, error) {
     headers := make(http.Header)
@@ -108,7 +118,7 @@ func (e fileHeaderError) Error() string {
 
 func newFileResourceReader(f *os.File) (FileResourceReader, error) {
     // Read 8-byte header length.
-    buf := []byte{0, 0, 0, 0, 0, 0, 0}
+    buf := []byte{0, 0, 0, 0, 0, 0, 0, 0}
     n, err := f.Read(buf)
     if err != nil {
         return FileResourceReader{nil, &http.Header{}}, err
@@ -119,7 +129,10 @@ func newFileResourceReader(f *os.File) (FileResourceReader, error) {
     headerLength := binary.LittleEndian.Uint64(buf)
 
     // Read headers
-    headers, err := readHeaders(f)
+    var headers *http.Header
+    if headerLength != 0 {
+        headers, err = readHeaders(f)
+    }
     if err != nil {
         return FileResourceReader{nil, &http.Header{}}, err
     }
@@ -142,6 +155,65 @@ func (rr FileResourceReader) Close() error {
 
 func (rr FileResourceReader) Headers() *http.Header {
     return rr.headers
+}
+
+type FileResourceWriter struct {
+    f *os.File
+    headers *http.Header
+    headersWritten bool
+}
+
+func (rw* FileResourceWriter) writeHeaders() (int, error) {
+    var headersBuffer bytes.Buffer
+    if rw.headers != nil {
+        if err := rw.headers.Write(&headersBuffer); err != nil {
+            return 0, err
+        }
+    }
+    headerLength := uint64(headersBuffer.Len())
+    headerLengthHeaderBuffer := make([]byte, 8)
+    binary.LittleEndian.PutUint64(headerLengthHeaderBuffer, headerLength)
+    headerLengthWritten, err := io.Copy(rw.f, bytes.NewReader(headerLengthHeaderBuffer))
+    if err != nil {
+        return int(headerLengthWritten), err
+    }
+    if headerLengthWritten != 8 {
+        return int(headerLengthWritten), fmt.Errorf("Failed to write length of headers. Expected to write %d bytes but wrote %d.", 8, headerLengthWritten)
+    }
+    headersBodyLengthWritten, err := io.Copy(rw.f, &headersBuffer)
+    if err != nil {
+        return int(headerLengthWritten + headersBodyLengthWritten), err
+    }
+    if uint64(headersBodyLengthWritten) != headerLength {
+        return int(headerLengthWritten + headersBodyLengthWritten), fmt.Errorf("Failed to write headers. Expected to write %d bytes but wrote %d.", 8, headerLength, headersBodyLengthWritten)
+    }
+    return int(headerLengthWritten + headersBodyLengthWritten), nil
+}
+
+func (rw* FileResourceWriter) Write(b []byte) (int, error) {
+    var headerLen int
+    if !rw.headersWritten {
+        headerLen, err := rw.writeHeaders()
+        if err != nil {
+            return headerLen, err
+        }
+        rw.headersWritten = true
+    }
+    bodyLen, err := rw.f.Write(b)
+    return headerLen + bodyLen, err
+}
+
+func (rw* FileResourceWriter) Close() error {
+    return rw.f.Close()
+}
+
+func (rw* FileResourceWriter) WriteHeaders(headers *http.Header) error {
+    rw.headers = headers
+    return nil
+}
+
+func newFileResourceWriter(f *os.File) (*FileResourceWriter, error) {
+    return &FileResourceWriter{f, nil, false}, nil
 }
 
 type FileDatastore struct {
@@ -181,10 +253,15 @@ func (ds FileDatastore) Open(hashedUrl string) (ResourceReader, error) {
     return newFileResourceReader(f)
 }
 
-func (ds FileDatastore) Create(hashedUrl string) (io.WriteCloser, error) {
+func (ds FileDatastore) Create(hashedUrl string) (ResourceWriter, error) {
     f, err := os.Create(ds.translateUrlToFilePath(hashedUrl))
     if err != nil {
         return nil, err
     }
-    return f, nil
+    fileResourceWriter, err := newFileResourceWriter(f)
+    if err != nil {
+        return nil, err
+    }
+    var resourceWriter ResourceWriter = fileResourceWriter
+    return resourceWriter, nil
 }

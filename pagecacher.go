@@ -94,7 +94,6 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
                 // TODO: Modify the link properly.
                 // TODO: Add to queue.
                 translated, err := translateCachedUrl(node.Attr[i].Val, baseUrl)
-                log.Printf("Cached URL as (%d) %s\n", len(translated), translated)
                 if err != nil {
                     fmt.Println("Failed to parse as URL.")
                     continue
@@ -118,12 +117,12 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     // TODO: Inspect the MIME type and respond appropriately.
 
     log.Printf("Caching %s as %s\n", srcUrl, encodedUrl)
-    outfile, err := ds.Create(encodedUrl)
+    resourceWriter, err := ds.Create(encodedUrl)
     if err != nil {
         log.Println("Failed to open page %s for writing: %v", encodedUrl, err)
         return "", err
     }
-    defer outfile.Close()
+    defer resourceWriter.Close()
 
     parsedUrl, parseErr := url.Parse(srcUrl)
     if parseErr != nil {
@@ -143,13 +142,15 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
             visitNode(c)
         }
     }
+    // TODO: May want to filter some of these.
+    resourceWriter.WriteHeaders(&resp.Header)
     doc, err := html.Parse(resp.Body)
     if err != nil {
         log.Println("Failed to parse HTML: %v", err)
         return "", err
     }
     visitNode(doc)
-    html.Render(outfile, doc)
+    html.Render(resourceWriter, doc)
     translated, err := translateAbsoluteUrlToCachedUrl(srcUrl)
     if err != nil {
         return "", err
