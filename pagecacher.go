@@ -14,8 +14,6 @@ import (
 
 // TODO: How do we take time slicing into account?
 
-const mainUrl = "https://docs.openshift.com/container-platform/3.4/install_config/upgrading/manual_upgrades.html"
-
 // TODO: Get this from config somehow.
 // TODO: Change to http://c/
 const baseName = "http://localhost:8080/c/"
@@ -24,13 +22,20 @@ const baseName = "http://localhost:8080/c/"
 var ds = datastore.NewFileDatastore("")
 var encoder = enc.NewDefaultEncoder()
 
-// TODO: img src
 var linkAttrs = map[string][]string{
     "a": []string{"href"},
     "link": []string{"href"},
     "meta": []string{"content"},
     "script": []string{"src"},
     "img": []string{"src"},
+}
+
+var filteredHeaderKeys = []string {
+    "Content-Length",
+    "Alt-Svc",
+    "Date",
+    "Strict-Transport-Security",
+    "Via",
 }
 
 // TODO: Pull out into separate template file.
@@ -54,9 +59,6 @@ const footerText = `
 `
 
 const createPageText = headerText + createPageFormText + footerText;
-
-// TODO: Need a bijective encoding scheme so that we can pre-translate the links,
-// and do just-in-time caching.
 
 // URL is assumed to be a normalized absolute URL.
 
@@ -91,8 +93,6 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
     for i, attr := range node.Attr {
         for _, linkAttr := range linkAttrs[tag] {
             if attr.Key == linkAttr {
-                // TODO: Modify the link properly.
-                // TODO: Add to queue.
                 translated, err := translateCachedUrl(node.Attr[i].Val, baseUrl)
                 if err != nil {
                     fmt.Println("Failed to parse as URL.")
@@ -111,10 +111,9 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
     }
     resp, err := http.Get(srcUrl)
     if err != nil {
-        log.Println("Failed to get url %s: %v", srcUrl, err)
+        log.Printf("Failed to get url %s: %v\n", srcUrl, err)
         return "", err
     }
-    // TODO: Inspect the MIME type and respond appropriately.
 
     log.Printf("Caching %s as %s\n", srcUrl, encodedUrl)
     resourceWriter, err := ds.Create(encodedUrl)
@@ -130,7 +129,6 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
         return "", parseErr
     }
 
-    // Gathers other links that need to be fetched and modifies their hyperlinks.
     var visitNode func(node *html.Node)
     visitNode = func(node *html.Node) {
         if node.Type == html.ElementNode {
@@ -142,7 +140,13 @@ func cachePage(srcUrl string, ds datastore.Datastore) (string, error) {
             visitNode(c)
         }
     }
-    // TODO: May want to filter some of these.
+
+    for _, filteredHeaderKey := range filteredHeaderKeys {
+        if resp.Header.Get(filteredHeaderKey) != "" {
+            resp.Header.Del(filteredHeaderKey)
+        }
+    }
+
     resourceWriter.WriteHeaders(&resp.Header)
     doc, err := html.Parse(resp.Body)
     if err != nil {
@@ -168,7 +172,13 @@ func serveExistingPage(encodedUrl string, w http.ResponseWriter) {
         return
     }
     defer f.Close()
-    // TODO: Copy Headers as well.
+    decodedUrl, _ := encoder.Decode(encodedUrl)
+    log.Printf("Serving %s (%s)\n", decodedUrl, encodedUrl)
+    for key, values := range *f.Headers() {
+        for _, value := range values {
+            w.Header().Add(key, value)
+        }
+    }
     io.Copy(w, f)
 }
 

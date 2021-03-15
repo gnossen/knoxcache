@@ -81,18 +81,12 @@ func readHeaders(reader io.Reader) (*http.Header, error) {
         }
         pairScanner := bufio.NewScanner(bytes.NewReader(pairBytes))
         pairScanner.Split(splitHeaderPair)
-        var pairElems [2]string
-        for i := 0; i < 2; i++ {
-           if !pairScanner.Scan() {
-               return nil, headerParseError{fmt.Sprintf("Did not find a colon in header pair: %s", string(pairBytes))}
-           }
-           pairElems[i] = pairScanner.Text()
+        if !pairScanner.Scan() {
+            return nil, headerParseError{fmt.Sprintf("Did not find a colon in header pair: %s", string(pairBytes))}
         }
-        if pairScanner.Scan() {
-            return nil, headerParseError{fmt.Sprintf("Too many colons in header pair: %s", string(pairBytes))}
-        }
-        key := strings.TrimRight(pairElems[0], " \t")
-        value := strings.TrimLeft(pairElems[1], " \t")
+        rawKey := pairScanner.Text()
+        key := strings.TrimRight(rawKey, " \t")
+        value := strings.TrimLeft(string(pairBytes[len(rawKey) + 1:]), " \t")
         currentValues, ok := headers[key]
         if !ok {
             headers[key] = []string{value}
@@ -167,6 +161,10 @@ func (rw* FileResourceWriter) writeHeaders() (int, error) {
     var headersBuffer bytes.Buffer
     if rw.headers != nil {
         if err := rw.headers.Write(&headersBuffer); err != nil {
+            return 0, err
+        }
+        // Need an extra CRLF to mark the end of the headers.
+        if _, err := headersBuffer.Write([]byte("\r\n")); err != nil {
             return 0, err
         }
     }
