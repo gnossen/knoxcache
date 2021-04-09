@@ -6,6 +6,7 @@ import (
     "net/http"
     "net/url"
     "golang.org/x/net/html"
+    "golang.org/x/net/html/atom"
     "io"
     "strings"
     "fmt"
@@ -61,8 +62,28 @@ const footerText = `
 
 const createPageText = headerText + createPageFormText + footerText;
 
-// URL is assumed to be a normalized absolute URL.
+// TODO: Link this stuff in somehow.
+const interceptionScript = `
+if ('serviceWorker' in navigator) {
+    // document.write("<h1>Found serviceWorker in navigator!</h1>");
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('../service-worker.js').then(function(registration){
+            console.log("Service worker registered with scope: ", registration.scope);
+        }, function(err) {
+            console.log("Service worker registration failed: ", err);
+        });
+    });
+}
+`
 
+const interceptionServiceWorker = `
+self.addEventListener('fetch', function(event) {
+    console.log("Intercepted request: ", event.request);
+    event.respondWith(fetch(event.request));
+});
+`
+
+// URL is assumed to be a normalized absolute URL.
 func translateAbsoluteUrlToCachedUrl(toTranslate string) (string, error) {
     encoded, err := encoder.Encode(toTranslate)
     if err != nil {
@@ -103,6 +124,23 @@ func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
             }
         }
     }
+}
+
+func addInterceptionScript(doc *html.Node) error {
+    // TODO: Inject `<script>$SCRIPT</script>`.
+    scriptNode := &html.Node{
+        nil, nil, nil, nil, nil,
+        html.ElementNode, atom.Script,
+        "script", "", []html.Attribute{},
+    }
+    scriptTextNode := &html.Node{
+        nil, nil, nil, nil, nil,
+        html.TextNode, atom.Plaintext,
+        interceptionScript, "", []html.Attribute{},
+    }
+    scriptNode.AppendChild(scriptTextNode)
+    doc.InsertBefore(scriptNode, doc.FirstChild)
+    return nil
 }
 
 func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string, error) {
@@ -157,6 +195,10 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
     resourceWriter.WriteHeaders(&resp.Header)
 
     if contentType == "text/html" {
+        // TODO: Do this translation when *serving* pages, not when caching
+        // them. This gives us the flexibility to change how we modify them
+        // in the future without ever risking having deleted irretrievable
+        // information.
         var visitNode func(node *html.Node)
         visitNode = func(node *html.Node) {
             if node.Type == html.ElementNode {
@@ -170,6 +212,11 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
         }
 
         doc, err := html.Parse(resp.Body)
+        if err != nil {
+            return "", err
+        }
+
+        err = addInterceptionScript(doc)
         if err != nil {
             return "", err
         }
@@ -291,8 +338,14 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
     }
 }
 
+func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
+    w.Header().Add("Content-Type", "text/javascript")
+    io.WriteString(w, interceptionServiceWorker)
+}
+
 func main() {
     http.HandleFunc("/", handleCreatePageRequest)
     http.HandleFunc("/c/", handlePageRequest)
+    http.HandleFunc("/service-worker.js", handleServiceWorker)
     log.Fatal(http.ListenAndServe("localhost:8080", nil))
 }
