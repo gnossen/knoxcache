@@ -12,13 +12,21 @@ import (
     "fmt"
     "log"
     "mime"
+    "flag"
 )
 
 // TODO: How do we take time slicing into account?
 
 // TODO: Get this from config somehow.
 // TODO: Change to http://c/
-const baseName = "http://localhost:8080/c/"
+const baseNameFormat = "http://%s/c/"
+const defaultListenHost = "0.0.0.0"
+const defaultPort = "8080"
+
+var advertiseAddress = flag.String("advertise-address", "localhost", "The address at which the service will be accessible.")
+var listenAddress = flag.String("listen-address", "0.0.0.0:8080", "The address at which the service will listen.")
+
+var baseName = ""
 
 // TODO: Make storage location configurable.
 var ds = datastore.NewFileDatastore("")
@@ -344,8 +352,11 @@ func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+    flag.Parse()
     http.HandleFunc("/", handleCreatePageRequest)
     http.HandleFunc("/c/", handlePageRequest)
     http.HandleFunc("/service-worker.js", handleServiceWorker)
-    log.Fatal(http.ListenAndServe("localhost:8080", nil))
+    baseName = fmt.Sprintf(baseNameFormat, *advertiseAddress)
+    log.Printf("Listening on %s", *listenAddress)
+    log.Fatal(http.ListenAndServe(*listenAddress, nil))
 }
