@@ -23,13 +23,13 @@ const baseNameFormat = "http://%s/c/"
 const defaultListenHost = "0.0.0.0"
 const defaultPort = "8080"
 
-var advertiseAddress = flag.String("advertise-address", "localhost", "The address at which the service will be accessible.")
+var advertiseAddress = flag.String("advertise-address", "localhost:8080", "The address at which the service will be accessible.")
 var listenAddress = flag.String("listen-address", "0.0.0.0:8080", "The address at which the service will listen.")
+var datastoreRoot = flag.String("file-store-root", "", "The directory in which to place cached files.")
 
 var baseName = ""
 
-// TODO: Make storage location configurable.
-var ds = datastore.NewFileDatastore("")
+var ds datastore.FileDatastore
 var encoder = enc.NewDefaultEncoder()
 
 var linkAttrs = map[string][]string{
@@ -353,6 +353,7 @@ func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 
 func main() {
     flag.Parse()
+    ds = datastore.NewFileDatastore(*datastoreRoot)
     http.HandleFunc("/", handleCreatePageRequest)
     http.HandleFunc("/c/", handlePageRequest)
     http.HandleFunc("/service-worker.js", handleServiceWorker)

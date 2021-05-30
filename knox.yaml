@@ -1,0 +1,58 @@
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: knox-pv
+spec:
+  storageClassName: kadalu.replica1
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knox
+  labels:
+    app: knox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: knox
+  template:
+    metadata:
+      labels:
+        app: knox
+    spec:
+      containers:
+      - name: knox
+        image: docker:5000/knox:5
+        args:
+        - "/pagecacher"
+        - "--listen-address=0.0.0.0:80"
+        - "--advertise-address=knox"
+        - "--file-store-root=/mnt/pv"
+        volumeMounts:
+        - mountPath: "/mnt/pv"
+          name: csivol
+      volumes:
+      - name: csivol
+        persistentVolumeClaim:
+          claimName: knox-pv
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knox
+  labels:
+    app: knox
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+  selector:
+    app: knox
