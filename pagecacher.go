@@ -3,6 +3,7 @@ package main
 import (
     "github.com/gnossen/cache/datastore"
     enc "github.com/gnossen/cache/encoder"
+    "context"
     "net/http"
     "net/url"
     "golang.org/x/net/html"
@@ -63,12 +64,26 @@ const createPageFormText = `
         </form>
 `
 
+const ipFooterFormatText = `
+<style>
+.footer {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 100%%;
+  text-align: center;
+}
+</style>
+
+<div class="footer">
+    <p>Served from %s</p>
+</div>
+`
+
 const footerText = `
     </body>
 </html>
 `
-
-const createPageText = headerText + createPageFormText + footerText;
 
 // TODO: Link this stuff in somehow.
 const interceptionScript = `
@@ -312,11 +327,19 @@ func queryError(w http.ResponseWriter) {
     io.WriteString(w, "Invalid query.")
 }
 
+func writeFooter(w http.ResponseWriter, context context.Context) {
+    localAddr := context.Value(http.LocalAddrContextKey)
+    io.WriteString(w, fmt.Sprintf(ipFooterFormatText, localAddr))
+    io.WriteString(w, footerText)
+}
+
 func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
     queries := r.URL.Query()
     if len(queries) == 0 {
         w.WriteHeader(200)
-        io.WriteString(w, createPageText)
+        io.WriteString(w, headerText)
+        io.WriteString(w, createPageFormText)
+        writeFooter(w, r.Context())
         return
     } else if len(queries) == 1 {
         requestedUrls, ok := queries["url"]
@@ -338,7 +361,7 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
             io.WriteString(w, headerText)
             io.WriteString(w, createPageFormText)
             io.WriteString(w, successMsg)
-            io.WriteString(w, footerText)
+            writeFooter(w, r.Context())
         }
     } else {
         queryError(w)
