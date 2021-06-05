@@ -141,7 +141,7 @@ func newFileResourceReader(f *os.File) (FileResourceReader, error) {
 	}
 
 	// Seek to beginning of content.
-	_, err = f.Seek(int64(headerLength)+8, 0)
+	_, err = f.Seek(int64(headerLength)+16, 0)
 	if err != nil {
 		return FileResourceReader{nil, &http.Header{}}, err
 	}
