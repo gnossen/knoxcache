@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
       - name: knox
-        image: docker:5000/knox:5
+        image: docker:5000/knox:6
         args:
         - "/pagecacher"
         - "--listen-address=0.0.0.0:80"
