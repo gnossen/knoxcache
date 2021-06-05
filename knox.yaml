@@ -4,7 +4,7 @@ apiVersion: v1
 metadata:
   name: knox-pv
 spec:
-  storageClassName: kadalu.replica1
+  storageClassName: kadalu.replica2
   accessModes:
     - ReadWriteMany
   resources:
@@ -27,6 +27,16 @@ spec:
       labels:
         app: knox
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - knox
+            topologyKey: "kubernetes.io/hostname"
       containers:
       - name: knox
         image: docker:5000/knox:6
