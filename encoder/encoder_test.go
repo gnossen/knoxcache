@@ -5,7 +5,7 @@ import (
     "bytes"
     "math"
     "math/rand"
-    "github.com/gnossen/cache/encoder"
+    "github.com/gnossen/knoxcache/encoder"
 )
 
 func invert(e encoder.Encoder, s string, t *testing.T) {

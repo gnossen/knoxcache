@@ -1,8 +1,8 @@
 package main
 
 import (
-    "github.com/gnossen/cache/datastore"
-    enc "github.com/gnossen/cache/encoder"
+    "github.com/gnossen/knoxcache/datastore"
+    enc "github.com/gnossen/knoxcache/encoder"
     "context"
     "net/http"
     "net/url"

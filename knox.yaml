@@ -39,9 +39,9 @@ spec:
             topologyKey: "kubernetes.io/hostname"
       containers:
       - name: knox
-        image: docker:5000/knox:6
+        image: docker:5000/knox:7
         args:
-        - "/pagecacher"
+        - "/knox"
         - "--listen-address=0.0.0.0:80"
         - "--advertise-address=knox"
         - "--file-store-root=/mnt/pv"

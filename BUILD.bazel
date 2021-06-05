@@ -2,27 +2,27 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
    name = "encoder",
-   srcs = ["encoder.go"],
-   importpath = "github.com/gnossen/cache/encoder",
+   srcs = ["encoder/encoder.go"],
+   importpath = "github.com/gnossen/knoxcache/encoder",
 )
 
 go_test(
    name = "encoder_test",
-   srcs = ["encoder_test.go"],
+   srcs = ["encoder/encoder_test.go"],
    deps = [":encoder"],
 )
 
 go_library(
    name = "datastore",
-   srcs = ["datastore.go"],
-   importpath = "github.com/gnossen/cache/datastore",
+   srcs = ["datastore/datastore.go"],
+   importpath = "github.com/gnossen/knoxcache/datastore",
 )
 
 go_test(
    name = "datastore_test",
    srcs = [
-        "datastore_test.go",
-        "datastore.go"
+        "datastore/datastore_test.go",
+        "datastore/datastore.go"
    ],
 )
 

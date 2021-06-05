@@ -1,7 +1,15 @@
+FROM golang:1.16-stretch
+
+COPY . /build
+
+WORKDIR /build
+
+RUN go get -t .
+RUN go build
+
+
 FROM phusion/baseimage:18.04-1.0.0
 
-COPY pagecacher /pagecacher
+COPY --from=0 /build/knoxcache /knox
 
-EXPOSE 8080
-
-CMD /pagecacher
+CMD /knox
