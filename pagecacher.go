@@ -53,31 +53,43 @@ var filteredHeaderKeys = []string {
 // TODO: Make pretty.
 const headerText = `
 <html>
-    <title>Cache</title>
+    <title>Knox Cache</title>
     <body>
 `
 
 const createPageFormText = `
-        <form>
-            <input type="text" name="url">
-            <input type="submit" value="Create">
-        </form>
+        <style>
+        .input-form {
+            position: fixed;
+            left: 0;
+            top: 20%;
+            width: 100%;
+            text-align: center;
+        }
+        </style>
+        <div class="input-form">
+            <form>
+                <input type="text" size="80" name="url"><br /><br />
+                <input type="submit" value="Create">
+            </form>
 `
 
 const ipFooterFormatText = `
-<style>
-.footer {
-  position: fixed;
-  left: 0;
-  bottom: 0;
-  width: 100%%;
-  text-align: center;
-}
-</style>
+        </div>
 
-<div class="footer">
-    <p>Served from %s</p>
-</div>
+        <style>
+        .footer {
+          position: fixed;
+          left: 0;
+          bottom: 0;
+          width: 100%%;
+          text-align: center;
+        }
+        </style>
+
+        <div class="footer">
+            <p>Served from %s</p>
+        </div>
 `
 
 const footerText = `
