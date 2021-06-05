@@ -104,25 +104,32 @@ type FileResourceReader struct {
     headers *http.Header
 }
 
-type fileHeaderError struct {
-    filename string
-}
-
-func (e fileHeaderError) Error() string {
-    return fmt.Sprintf("File %s did not have mandatory 8 byte header. Perhaps it was truncated?", e.filename)
-}
-
-func newFileResourceReader(f *os.File) (FileResourceReader, error) {
-    // Read 8-byte header length.
+func readUint64(f io.Reader) (uint64, error) {
     buf := []byte{0, 0, 0, 0, 0, 0, 0, 0}
     n, err := f.Read(buf)
     if err != nil {
-        return FileResourceReader{nil, &http.Header{}}, err
+        return 0, err
     }
     if n != len(buf) {
-        return FileResourceReader{nil, &http.Header{}}, fileHeaderError{f.Name()}
+        return 0, fmt.Errorf("Attempted to read 8 bytes, but only found %d.", n)
     }
-    headerLength := binary.LittleEndian.Uint64(buf)
+    return binary.LittleEndian.Uint64(buf), nil
+}
+
+func newFileResourceReader(f *os.File) (FileResourceReader, error) {
+    fileFormatVersion, err := readUint64(f)
+    if err != nil {
+        return FileResourceReader{nil, &http.Header{}}, fmt.Errorf("%s: Failed to read file format version: %v", f.Name(), err)
+    }
+
+    if fileFormatVersion != 0 {
+        return FileResourceReader{nil, &http.Header{}}, fmt.Errorf("%s: Unsupported file format version: %d. Supported versions: [0]", f.Name(), fileFormatVersion)
+    }
+
+    headerLength, err := readUint64(f)
+    if err != nil {
+        return FileResourceReader{nil, &http.Header{}}, fmt.Errorf("%s: Failed to read header length: %v", f.Name(), err)
+    }
 
     // Read headers
     var headers *http.Header
@@ -159,6 +166,19 @@ type FileResourceWriter struct {
     headersWritten bool
 }
 
+func writeUint64(output uint64, w io.Writer) (int, error) {
+    uint64Buffer := make([]byte, 8)
+    binary.LittleEndian.PutUint64(uint64Buffer, output)
+    lengthWritten, err := io.Copy(w, bytes.NewReader(uint64Buffer))
+    if err != nil {
+        return int(lengthWritten), err
+    }
+    if lengthWritten != 8 {
+        return int(lengthWritten), fmt.Errorf("Expected to write %d bytes but wrote %d.", 8, lengthWritten)
+    }
+    return 8, nil
+}
+
 func (rw* FileResourceWriter) writeHeaders() (int, error) {
     var headersBuffer bytes.Buffer
     if rw.headers != nil {
@@ -170,24 +190,32 @@ func (rw* FileResourceWriter) writeHeaders() (int, error) {
             return 0, err
         }
     }
+    totalWritten := 0
+
+
+    versionLengthWritten, err := writeUint64(0, rw.f)
+    totalWritten += versionLengthWritten
+    if err != nil {
+        return totalWritten, fmt.Errorf("Failed to write file version: %v", err)
+    }
+
     headerLength := uint64(headersBuffer.Len())
-    headerLengthHeaderBuffer := make([]byte, 8)
-    binary.LittleEndian.PutUint64(headerLengthHeaderBuffer, headerLength)
-    headerLengthWritten, err := io.Copy(rw.f, bytes.NewReader(headerLengthHeaderBuffer))
+    headerLengthWritten, err := writeUint64(headerLength, rw.f)
+    totalWritten += headerLengthWritten
     if err != nil {
-        return int(headerLengthWritten), err
+        return totalWritten, fmt.Errorf("Failed to write length of HTTP headers: %v", err)
     }
-    if headerLengthWritten != 8 {
-        return int(headerLengthWritten), fmt.Errorf("Failed to write length of headers. Expected to write %d bytes but wrote %d.", 8, headerLengthWritten)
-    }
+
+
     headersBodyLengthWritten, err := io.Copy(rw.f, &headersBuffer)
+    totalWritten += int(headersBodyLengthWritten)
     if err != nil {
-        return int(headerLengthWritten + headersBodyLengthWritten), err
+        return totalWritten, err
     }
     if uint64(headersBodyLengthWritten) != headerLength {
-        return int(headerLengthWritten + headersBodyLengthWritten), fmt.Errorf("Failed to write headers. Expected to write %d bytes but wrote %d.", 8, headerLength, headersBodyLengthWritten)
+        return totalWritten, fmt.Errorf("Failed to write headers. Expected to write %d bytes but wrote %d.", 8, headerLength, headersBodyLengthWritten)
     }
-    return int(headerLengthWritten + headersBodyLengthWritten), nil
+    return totalWritten, nil
 }
 
 func (rw* FileResourceWriter) Write(b []byte) (int, error) {
