@@ -1,8 +1,13 @@
 let cacheButton = document.getElementById("cache");
 let extensionText = document.getElementById("extensionText");
 
+// This may have to change if we support more browsers.
+if (!("browser" in window)) {
+    browser = chrome;
+}
+
 cacheButton.addEventListener("click", async () => {
-  chrome.tabs.query({active: true, lastFocusedWindow: true}, tabs => {
+  browser.tabs.query({active: true, lastFocusedWindow: true}, tabs => {
     let url = tabs[0].url;
     let digestedUrl = btoa(url);
     let advertisedAddress = "knox"
