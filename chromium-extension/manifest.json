@@ -1,0 +1,15 @@
+{
+    "name": "Knox",
+    "description": "Cache web resources.",
+    "version": "0.1",
+    "manifest_version": 3,
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "permissions": [
+        "tabs"
+    ],
+    "host_permissions": [
+        "http://knox/*"
+    ]
+}
