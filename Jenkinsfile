@@ -15,9 +15,11 @@ pipeline {
 
     stages {
         stage('Build Browser Extensions') {
-            // TODO: Only when there are changes to it.
-            sh "cd chromium-extension; make"
-            sh "cd firefox-addon; make"
+            steps {
+                // TODO: Only when there are changes to it.
+                sh "cd chromium-extension; make"
+                sh "cd firefox-addon; make"
+            }
         }
 
         stage('Publish Browser Extensions') {
