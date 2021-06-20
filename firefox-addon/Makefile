@@ -1,14 +1,19 @@
-PATCH_VERSION ?= dev
-VERSION="0.1.${PATCH_VERSION}"
+BUILD_NUMBER ?= dev
+VERSION="0.1.${BUILD_NUMBER}"
 
 LOGO_SIZES=16 32 64
 LOGOS=$(foreach SIZE,${LOGO_SIZES},logo${SIZE}.png )
+LOGO_EXPRESSION=$(shell echo ${LOGO_SIZES} | awk '{for(i=1; i<=NF; i++) {printf "{\"icons\": {\"" $$i "\": \"logo" $$i ".png\"}}"; if (i != NF) {printf " * "} }}')
+JQ_CMD='. + {version: $$version} * ${LOGO_EXPRESSION}'
 
 COPIED_RESOURCES=knox.js knox.css knox.html
 RESOURCES=manifest.json ${COPIED_RESOURCES} ${LOGOS}
 
 .PHONY: all
 all: knox-firefox-addon-${VERSION}.xpi
+
+manifest.json: manifest.json.template
+	jq --arg version ${VERSION} ${JQ_CMD} <"$^" >"$@"
 
 define copied_resource_template =
 $(eval RESOURCE_NAME		:= $(1))
@@ -40,3 +45,4 @@ clean:
 	rm -f *.png
 	rm -f *.xpi
 	rm -f ${COPIED_RESOURCES}
+	rm manifest.json
