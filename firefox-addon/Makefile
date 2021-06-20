@@ -1,4 +1,6 @@
 BUILD_NUMBER ?= dev
+
+# TODO: Proxy the major version from the chromium extension.
 VERSION="0.1.${BUILD_NUMBER}"
 
 LOGO_SIZES=16 32 64
@@ -39,6 +41,10 @@ logos: ${LOGOS}
 
 knox-firefox-addon-${VERSION}.xpi: ${RESOURCES}
 	zip $@ $^
+
+.PHONY: print-version
+print-version:
+	@echo "${VERSION}"
 
 .PHONY: clean
 clean:

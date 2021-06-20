@@ -31,6 +31,9 @@ logos: ${LOGOS}
 knox-chromium-extension-${VERSION}.zip: ${RESOURCES}
 	zip $@ $<
 
+.PHONY: print-version
+print-version:
+	@echo "${VERSION}"
 
 .PHONY: clean
 clean:
