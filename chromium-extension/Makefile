@@ -1,23 +1,30 @@
-LOGOS=logo16.png logo32.png logo64.png
+PATCH_VERSION ?= dev
+VERSION="0.1.${PATCH_VERSION}"
+
+LOGO_SIZES=16 32 64
+LOGOS=$(foreach SIZE,${LOGO_SIZES},logo${SIZE}.png )
+
 RESOURCES=knox.js knox.css knox.html manifest.json ${LOGOS}
 
-logo16.png: ../logo.svg
-	inkscape -w 16 -h 16 $^ -o $@
+.PHONY: all
+all: knox-chromium-extension-${VERSION}.zip
 
-logo32.png: ../logo.svg
-	inkscape -w 32 -h 32 $^ -o $@
+define logo_template =
+$(eval LOGO_SIZE		:= $(1))
+$(eval LOGO := logo$(LOGO_SIZE).png)
 
-logo64.png: ../logo.svg
-	inkscape -w 64 -h 64 $^ -o $@
+$(LOGO): ../logo.svg
+	inkscape -w ${LOGO_SIZE} -h ${LOGO_SIZE} "$$^" -o "$$@"
+endef
+
+$(foreach LOGO_SIZE,${LOGO_SIZES},$(eval $(call logo_template,${LOGO_SIZE})))
 
 .PHONY: logos
 logos: ${LOGOS}
 
-knox-chromium-extension.zip: ${RESOURCES}
+knox-chromium-extension-${VERSION}.zip: ${RESOURCES}
 	zip $@ $<
 
-.PHONY: all
-all: knox-chromium-extension.zip
 
 .PHONY: clean
 clean:
