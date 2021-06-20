@@ -17,8 +17,8 @@ pipeline {
         stage('Build Browser Extensions') {
             steps {
                 // TODO: Only when there are changes to it.
-                sh "cd chromium-extension; make"
-                sh "cd firefox-addon; make"
+                sh "docker run -v `pwd`:/build -e \"BUILD_NUMBER=${BUILD_NUMBER}\" docker:5000/build-image:latest bash -c 'cd /build/chromium-extension && make'"
+                sh "docker run -v `pwd`:/build -e \"BUILD_NUMBER=${BUILD_NUMBER}\" docker:5000/build-image:latest bash -c 'cd /build/firefox-addon && make'"
             }
         }
 
