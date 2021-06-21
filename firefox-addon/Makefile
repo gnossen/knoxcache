@@ -1,7 +1,7 @@
-BUILD_NUMBER ?= dev
+BUILD_NUMBER ?= 0
 
 # TODO: Proxy the major version from the chromium extension.
-VERSION="0.1.${BUILD_NUMBER}"
+VERSION=0.1.${BUILD_NUMBER}
 
 LOGO_SIZES=16 32 64
 LOGOS=$(foreach SIZE,${LOGO_SIZES},logo${SIZE}.png )

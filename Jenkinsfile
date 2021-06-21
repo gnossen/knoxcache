@@ -18,8 +18,8 @@ pipeline {
             steps {
                 // TODO: Only when there are changes to it.
                 sh "docker pull docker:5000/build-image:latest"
-                sh "docker run -v `pwd`:/build -e \"BUILD_NUMBER=${BUILD_NUMBER}\" docker:5000/build-image:latest bash -c 'cd /build/chromium-extension && make'"
-                sh "docker run -v `pwd`:/build -e \"BUILD_NUMBER=${BUILD_NUMBER}\" docker:5000/build-image:latest bash -c 'cd /build/firefox-addon && make'"
+                sh "docker run -v `pwd`:/build -e \"BUILD_NUMBER=${BUILD_NUMBER}\" docker:5000/build-image:latest bash -c 'cd /build/chromium-extension && make clean && make'"
+                sh "docker run -v `pwd`:/build -e \"BUILD_NUMBER=${BUILD_NUMBER}\" docker:5000/build-image:latest bash -c 'cd /build/firefox-addon && make clean && make'"
             }
         }
 
