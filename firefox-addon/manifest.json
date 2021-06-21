@@ -9,7 +9,7 @@
   "permissions": [
     "tabs"
   ],
-  "version": "0.1.dev",
+  "version": "0.1.0",
   "icons": {
     "16": "logo16.png",
     "32": "logo32.png",

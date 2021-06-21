@@ -31,7 +31,8 @@ $(eval LOGO_SIZE		:= $(1))
 $(eval LOGO := logo$(LOGO_SIZE).png)
 
 $(LOGO): ../logo.svg
-	inkscape -w ${LOGO_SIZE} -h ${LOGO_SIZE} "$$^" -o "$$@"
+	inkscape -w ${LOGO_SIZE} -h ${LOGO_SIZE} "$$^" -o "$$@" || \
+		inkscape -w ${LOGO_SIZE} -h ${LOGO_SIZE} "$$^" -e "$$@"
 endef
 
 $(foreach LOGO_SIZE,${LOGO_SIZES},$(eval $(call logo_template,${LOGO_SIZE})))
