@@ -34,7 +34,7 @@ pipeline {
                     chromiumArtifactName = "knox-chromium-extension-${chromiumVersion}.zip"
                     chromiumRemoteDirectory = "knox/chromium-extension"
                     uploadArtifact("chromium-extension/${chromiumArtifactName}", chromiumRemoteDirectory, env.ART_STORE_USR, env.ART_STORE_PSW)
-                    updateLink("knox/chromium-extension", name, "chromium-extension-latest.zip", env.ART_STORE_USR, env.ART_STORE_PSW)
+                    updateLink("knox/chromium-extension", chromiumArtifactName, "chromium-extension-latest.zip", env.ART_STORE_USR, env.ART_STORE_PSW)
 
                     // TODO: Firefox.
                 }
