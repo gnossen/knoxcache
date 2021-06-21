@@ -29,7 +29,7 @@ $(foreach LOGO_SIZE,${LOGO_SIZES},$(eval $(call logo_template,${LOGO_SIZE})))
 logos: ${LOGOS}
 
 knox-chromium-extension-${VERSION}.zip: ${RESOURCES}
-	zip $@ $<
+	zip $@ $^
 
 .PHONY: print-version
 print-version:
