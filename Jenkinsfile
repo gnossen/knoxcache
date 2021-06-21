@@ -1,8 +1,6 @@
 @Library("artifact-store-library") _
 
 pipeline {
-    agent { label "common" }
-
     post {
         always {
             deleteDir()
