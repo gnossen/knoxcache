@@ -4,12 +4,12 @@ apiVersion: v1
 metadata:
   name: knox-pv
 spec:
-  storageClassName: kadalu.replica2
+  storageClassName: kadalu.dual1
   accessModes:
     - ReadWriteMany
   resources:
     requests:
-      storage: 100Gi
+      storage: 20Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -41,7 +41,7 @@ spec:
               topologyKey: "kubernetes.io/hostname"
       containers:
       - name: knox
-        image: docker:5000/knox:7
+        image: docker:5000/knox:8
         args:
         - "/knox"
         - "--listen-address=0.0.0.0:80"

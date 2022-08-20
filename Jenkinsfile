@@ -35,13 +35,13 @@ pipeline {
                     chromiumArtifactName = "knox-chromium-extension-${chromiumVersion}.zip"
                     chromiumRemoteDirectory = "knox/chromium-extension"
                     uploadArtifact("chromium-extension/${chromiumArtifactName}", chromiumRemoteDirectory, env.ART_STORE_USR, env.ART_STORE_PSW)
-                    updateLink("knox/chromium-extension", chromiumArtifactName, "chromium-extension-latest.zip", env.ART_STORE_USR, env.ART_STORE_PSW)
+                    updateLink("knox/chromium-extension", chromiumArtifactName, "knox-chromium-extension-latest.zip", env.ART_STORE_USR, env.ART_STORE_PSW)
 
                     firefoxVersion = sh(script: "cd firefox-addon; make print-version", returnStdout: true).trim()
                     firefoxArtifactName = "knox-firefox-addon-${firefoxVersion}.xpi"
                     firefoxRemoteDirectory = "knox/firefox-addon"
                     uploadArtifact("firefox-addon/${firefoxArtifactName}", firefoxRemoteDirectory, env.ART_STORE_USR, env.ART_STORE_PSW)
-                    updateLink("knox/firefox-addon", firefoxArtifactName, "firefox-addon-latest.xpi", env.ART_STORE_USR, env.ART_STORE_PSW)
+                    updateLink("knox/firefox-addon", firefoxArtifactName, "knox-firefox-addon-latest.xpi", env.ART_STORE_USR, env.ART_STORE_PSW)
                 }
             }
         }

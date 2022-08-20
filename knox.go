@@ -97,10 +97,9 @@ const footerText = `
 </html>
 `
 
-// TODO: Link this stuff in somehow.
+// TODO: Link script files into binary instead of textually embedding.
 const interceptionScript = `
 if ('serviceWorker' in navigator) {
-    // document.write("<h1>Found serviceWorker in navigator!</h1>");
     window.addEventListener('load', function() {
         navigator.serviceWorker.register('../service-worker.js').then(function(registration){
             console.log("Service worker registered with scope: ", registration.scope);
@@ -111,10 +110,18 @@ if ('serviceWorker' in navigator) {
 }
 `
 
-const interceptionServiceWorker = `
+const interceptionServiceWorkerFormat = `
 self.addEventListener('fetch', function(event) {
-    console.log("Intercepted request: ", event.request);
-    event.respondWith(fetch(event.request));
+    var advertisedAddress = "%s";
+    var pattern = /^https?:\/\//i;
+    if (pattern.test(event.request.url) && event.request.url.lastIndexOf("http://" + advertisedAddress) != 0) {
+        // Absolute URLs are simple to replace.
+        var newUrl = "http://" + advertisedAddress + "/c/" + btoa(event.request.url);
+        event.request.url = newUrl;
+        event.respondWith(fetch(event.request));
+    } else {
+        console.log("Failed to intercept relative URL: ", event.request.url)
+    }
 });
 `
 
@@ -383,7 +390,8 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
 
 func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/javascript")
-	io.WriteString(w, interceptionServiceWorker)
+    // TODO: Only evaluate this template once.
+	io.WriteString(w, fmt.Sprintf(interceptionServiceWorkerFormat, *advertiseAddress))
 }
 
 func main() {
