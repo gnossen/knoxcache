@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+const currentFileResourceReaderVersion = 1
+
 type HeaderReader interface {
 	io.ReadCloser
 }
@@ -21,6 +23,7 @@ type HeaderReader interface {
 type ResourceReader interface {
 	io.ReadCloser
 	Headers() *http.Header
+	ResourceURL() string
 }
 
 type ResourceWriter interface {
@@ -38,7 +41,7 @@ type Datastore interface {
 	Open(hashedUrl string) (ResourceReader, error)
 
 	// Resource must not exist when this method is called.
-	Create(hashedUrl string) (ResourceWriter, error)
+	Create(resourceURL string, hashedUrl string) (ResourceWriter, error)
 
 	// TODO: Might need to add Close method here as well once we add a networked
 	// db.
@@ -100,8 +103,9 @@ func readHeaders(reader io.Reader) (*http.Header, error) {
 }
 
 type FileResourceReader struct {
-	f       *os.File
-	headers *http.Header
+	f           *os.File
+	resourceURL string
+	headers     *http.Header
 }
 
 func readUint64(f io.Reader) (uint64, error) {
@@ -116,36 +120,67 @@ func readUint64(f io.Reader) (uint64, error) {
 	return binary.LittleEndian.Uint64(buf), nil
 }
 
+// Reads a string prefixed by its own length, as a uint64.
+func readLengthPrefixedString(f io.Reader) (string, error) {
+	strLen, err := readUint64(f)
+	if err != nil {
+		return "", fmt.Errorf("failed to read string length: %v", err)
+	}
+	buf := new(strings.Builder)
+	_, err = io.CopyN(buf, f, int64(strLen))
+	if err != nil {
+		return "", fmt.Errorf("failed to read string: %v", err)
+	}
+	return buf.String(), nil
+}
+
 func newFileResourceReader(f *os.File) (FileResourceReader, error) {
+	var preambleLength uint64 = 0
+	// TODO: Have readUint64 return its length.
 	fileFormatVersion, err := readUint64(f)
 	if err != nil {
-		return FileResourceReader{nil, &http.Header{}}, fmt.Errorf("%s: Failed to read file format version: %v", f.Name(), err)
+		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Failed to read file format version: %v", f.Name(), err)
+	}
+	preambleLength += 8
+
+	if fileFormatVersion != currentFileResourceReaderVersion {
+		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Unsupported file format version: %d. Supported versions: [%d]", f.Name(), fileFormatVersion, currentFileResourceReaderVersion)
 	}
 
-	if fileFormatVersion != 0 {
-		return FileResourceReader{nil, &http.Header{}}, fmt.Errorf("%s: Unsupported file format version: %d. Supported versions: [0]", f.Name(), fileFormatVersion)
+	// TODO: Have readLengthPrefixedString return its length.
+	resourceURL, err := readLengthPrefixedString(f)
+	if err != nil {
+		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Failed to read resource URL: %v", f.Name(), err)
 	}
+
+	preambleLength += 8
+	preambleLength += uint64(len(resourceURL))
 
 	headerLength, err := readUint64(f)
 	if err != nil {
-		return FileResourceReader{nil, &http.Header{}}, fmt.Errorf("%s: Failed to read header length: %v", f.Name(), err)
+		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Failed to read header length: %v", f.Name(), err)
 	}
+
+	preambleLength += 8
+	preambleLength += headerLength
 
 	// Read headers
 	var headers *http.Header
 	if headerLength != 0 {
 		headers, err = readHeaders(f)
+	} else {
+		headers = &http.Header{}
 	}
 	if err != nil {
-		return FileResourceReader{nil, &http.Header{}}, err
+		return FileResourceReader{nil, "", &http.Header{}}, err
 	}
 
 	// Seek to beginning of content.
-	_, err = f.Seek(int64(headerLength)+16, 0)
+	_, err = f.Seek(int64(preambleLength), 0)
 	if err != nil {
-		return FileResourceReader{nil, &http.Header{}}, err
+		return FileResourceReader{nil, "", &http.Header{}}, err
 	}
-	return FileResourceReader{f, headers}, nil
+	return FileResourceReader{f, resourceURL, headers}, nil
 }
 
 func (rr FileResourceReader) Read(b []byte) (int, error) {
@@ -160,10 +195,15 @@ func (rr FileResourceReader) Headers() *http.Header {
 	return rr.headers
 }
 
+func (rr FileResourceReader) ResourceURL() string {
+	return rr.resourceURL
+}
+
 type FileResourceWriter struct {
-	f              *os.File
-	headers        *http.Header
-	headersWritten bool
+	f               *os.File
+	headers         *http.Header
+	resourceURL     string
+	preambleWritten bool
 }
 
 func writeUint64(output uint64, w io.Writer) (int, error) {
@@ -179,6 +219,23 @@ func writeUint64(output uint64, w io.Writer) (int, error) {
 	return 8, nil
 }
 
+func writeLengthPrefixedString(s string, w io.Writer) (int, error) {
+	lenWritten := 0
+	n, err := writeUint64(uint64(len(s)), w)
+	lenWritten += n
+	if err != nil {
+		return lenWritten, fmt.Errorf("failed to write string prefix length of '%s': %v", s, err)
+	}
+
+	n, err = io.WriteString(w, s)
+	lenWritten += n
+	if err != nil {
+		return lenWritten, fmt.Errorf("failed to write string '%s': %v", s, err)
+	}
+
+	return lenWritten, nil
+}
+
 func (rw *FileResourceWriter) writeHeaders() (int, error) {
 	var headersBuffer bytes.Buffer
 	if rw.headers != nil {
@@ -191,12 +248,6 @@ func (rw *FileResourceWriter) writeHeaders() (int, error) {
 		}
 	}
 	totalWritten := 0
-
-	versionLengthWritten, err := writeUint64(0, rw.f)
-	totalWritten += versionLengthWritten
-	if err != nil {
-		return totalWritten, fmt.Errorf("Failed to write file version: %v", err)
-	}
 
 	headerLength := uint64(headersBuffer.Len())
 	headerLengthWritten, err := writeUint64(headerLength, rw.f)
@@ -216,17 +267,37 @@ func (rw *FileResourceWriter) writeHeaders() (int, error) {
 	return totalWritten, nil
 }
 
+func (rw *FileResourceWriter) writePreamble() (int, error) {
+	lenWritten := 0
+	n, err := writeUint64(uint64(currentFileResourceReaderVersion), rw.f)
+	if err != nil {
+		return lenWritten, fmt.Errorf("failed to write file format version: %v", err)
+	}
+	lenWritten += n
+	n, err = writeLengthPrefixedString(rw.resourceURL, rw.f)
+	lenWritten += n
+	if err != nil {
+		return lenWritten, fmt.Errorf("failed to write url '%s': %v", rw.resourceURL, err)
+	}
+	headerLen, err := rw.writeHeaders()
+	lenWritten += headerLen
+	if err != nil {
+		return lenWritten, err
+	}
+	rw.preambleWritten = true
+	return lenWritten, nil
+}
+
 func (rw *FileResourceWriter) Write(b []byte) (int, error) {
-	var headerLen int
-	if !rw.headersWritten {
-		headerLen, err := rw.writeHeaders()
+	var preambleLen int
+	if !rw.preambleWritten {
+		preambleLen, err := rw.writePreamble()
 		if err != nil {
-			return headerLen, err
+			return preambleLen, fmt.Errorf("Failed to write preamble: %v", err)
 		}
-		rw.headersWritten = true
 	}
 	bodyLen, err := rw.f.Write(b)
-	return headerLen + bodyLen, err
+	return preambleLen + bodyLen, err
 }
 
 func (rw *FileResourceWriter) Close() error {
@@ -238,8 +309,8 @@ func (rw *FileResourceWriter) WriteHeaders(headers *http.Header) error {
 	return nil
 }
 
-func newFileResourceWriter(f *os.File) (*FileResourceWriter, error) {
-	return &FileResourceWriter{f, nil, false}, nil
+func newFileResourceWriter(f *os.File, resourceURL string) (*FileResourceWriter, error) {
+	return &FileResourceWriter{f, nil, resourceURL, false}, nil
 }
 
 type FileDatastore struct {
@@ -284,12 +355,12 @@ func (ds FileDatastore) Open(hashedUrl string) (ResourceReader, error) {
 	return newFileResourceReader(f)
 }
 
-func (ds FileDatastore) Create(hashedUrl string) (ResourceWriter, error) {
+func (ds FileDatastore) Create(resourceURL string, hashedUrl string) (ResourceWriter, error) {
 	f, err := os.Create(ds.translateUrlToFilePath(hashedUrl))
 	if err != nil {
 		return nil, err
 	}
-	fileResourceWriter, err := newFileResourceWriter(f)
+	fileResourceWriter, err := newFileResourceWriter(f, resourceURL)
 	if err != nil {
 		return nil, err
 	}

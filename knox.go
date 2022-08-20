@@ -205,7 +205,7 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
 	}
 
 	log.Printf("Caching %s as %s\n", srcUrl, encodedUrl)
-	resourceWriter, err := ds.Create(encodedUrl)
+	resourceWriter, err := ds.Create(srcUrl, encodedUrl)
 	if err != nil {
 		log.Println("Failed to open page %s for writing: %v", encodedUrl, err)
 		return "", err
@@ -267,6 +267,7 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
 		html.Render(resourceWriter, doc)
 	} else {
 		log.Printf("  Saving as %s\n", contentType)
+		// TODO: Actually check for errors here.
 		io.Copy(resourceWriter, resp.Body)
 	}
 	// TODO: Add special handler for CSS that parses and replaces references.
@@ -390,7 +391,7 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
 
 func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/javascript")
-    // TODO: Only evaluate this template once.
+	// TODO: Only evaluate this template once.
 	io.WriteString(w, fmt.Sprintf(interceptionServiceWorkerFormat, *advertiseAddress))
 }
 
