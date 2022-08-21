@@ -245,6 +245,50 @@ func addInterceptionScript(doc *html.Node) error {
 	return nil
 }
 
+func getContentType(headers *http.Header) string {
+	contentType := "text/html"
+	rawContentType := headers.Get("Content-Type")
+	if rawContentType != "" {
+		mediaType, _, err := mime.ParseMediaType(rawContentType)
+		// If we cannot parse the MIME type, assume HTML.
+		if err == nil {
+			contentType = mediaType
+		}
+	}
+
+	return contentType
+}
+
+// TODO: Cache the transformation if it becomes a bottleneck.
+func transformHtml(resourceUrl *url.URL, in io.Reader, out io.Writer) error {
+	var visitNode func(node *html.Node)
+	visitNode = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			if _, ok := linkAttrs[node.Data]; ok {
+				modifyLink(node.Data, node, resourceUrl)
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			visitNode(c)
+		}
+	}
+
+	doc, err := html.Parse(in)
+	if err != nil {
+		return err
+	}
+
+	err = addInterceptionScript(doc)
+	if err != nil {
+		return err
+	}
+
+	visitNode(doc)
+	html.Render(out, doc)
+
+	return nil
+}
+
 func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string, error) {
 	encodedUrl, err := encoder.Encode(srcUrl)
 	if err != nil {
@@ -278,16 +322,6 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
 		return "", parseErr
 	}
 
-	contentType := "text/html"
-	rawContentType := resp.Header.Get("Content-Type")
-	if rawContentType != "" {
-		mediaType, _, err := mime.ParseMediaType(rawContentType)
-		// If we cannot parse the MIME type, assume HTML.
-		if err == nil {
-			contentType = mediaType
-		}
-	}
-
 	for _, filteredHeaderKey := range filteredHeaderKeys {
 		if resp.Header.Get(filteredHeaderKey) != "" {
 			resp.Header.Del(filteredHeaderKey)
@@ -296,39 +330,18 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
 
 	resourceWriter.WriteHeaders(&resp.Header)
 
+	contentType := getContentType(&resp.Header)
+	log.Printf("  Saving as %s\n", contentType)
 	if contentType == "text/html" {
-		// TODO: Do this translation when *serving* pages, not when caching
-		// them. This gives us the flexibility to change how we modify them
-		// in the future without ever risking having deleted irretrievable
-		// information.
-		var visitNode func(node *html.Node)
-		visitNode = func(node *html.Node) {
-			if node.Type == html.ElementNode {
-				if _, ok := linkAttrs[node.Data]; ok {
-					modifyLink(node.Data, node, parsedUrl)
-				}
-			}
-			for c := node.FirstChild; c != nil; c = c.NextSibling {
-				visitNode(c)
-			}
-		}
-
-		doc, err := html.Parse(resp.Body)
-		if err != nil {
+		if err = transformHtml(parsedUrl, resp.Body, resourceWriter); err != nil {
 			return "", err
 		}
-
-		err = addInterceptionScript(doc)
-		if err != nil {
-			return "", err
-		}
-
-		visitNode(doc)
-		html.Render(resourceWriter, doc)
 	} else {
-		log.Printf("  Saving as %s\n", contentType)
 		// TODO: Actually check for errors here.
-		io.Copy(resourceWriter, resp.Body)
+		_, err = io.Copy(resourceWriter, resp.Body)
+		if err != nil {
+			log.Println("Error saving '%s': %v", srcUrl, err)
+		}
 	}
 	// TODO: Add special handler for CSS that parses and replaces references.
 
