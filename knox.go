@@ -24,6 +24,8 @@ const baseNameFormat = "http://%s/c/"
 const defaultListenHost = "0.0.0.0"
 const defaultPort = "8080"
 
+const maxUrlSize = 160
+
 var advertiseAddress = flag.String("advertise-address", "localhost:8080", "The address at which the service will be accessible.")
 var listenAddress = flag.String("listen-address", "0.0.0.0:8080", "The address at which the service will listen.")
 var datastoreRoot = flag.String("file-store-root", "", "The directory in which to place cached files.")
@@ -66,6 +68,9 @@ const createPageFormText = `
             width: 100%;
             text-align: center;
         }
+		body {
+		  font-family: Sans-Serif;
+		}
         </style>
         <div class="input-form">
             <form>
@@ -123,6 +128,50 @@ self.addEventListener('fetch', function(event) {
         console.log("Failed to intercept relative URL: ", event.request.url)
     }
 });
+`
+
+const adminListHeader = `
+<html>
+    <style>
+        table {
+          width: 80vh;
+        }   
+		table, th, td {
+		  border: 1px solid black;
+		  border-collapse: collapse;
+		  padding: 4px;
+		  white-space: nowrap;
+		}
+        .source-url {
+		  overflow: hidden;
+          overflow-x: hidden;
+		  text-overflow: ellipsis;
+		  -o-text-overflow: ellipsis;
+        }
+		body {
+		  font-family: Sans-Serif;
+		}
+    </style>
+    <head>
+        <title>Knox Admin List</title>
+    </head>
+    <body>
+		<center>
+        <div style="overflow-x: auto;">
+        <table>
+            <tr>
+                <th>Source Page</th>
+                <th>Cached Resource</th>
+                <th>Cache Date</th>
+            </tr>
+`
+
+const adminListFooter = `
+        </table>
+        </div>
+		</center>
+    </body>
+</html>
 `
 
 // URL is assumed to be a normalized absolute URL.
@@ -414,6 +463,42 @@ func handleListRequest(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, "  ]\n}\n")
 }
 
+func shortenedUrl(url string) string {
+	if len(url) <= maxUrlSize {
+		return url
+	}
+	return url[0:maxUrlSize] + "..."
+}
+
+func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
+	// TODO: Figure out a way to write resource count and total size at
+	// beginning without first having to iterate through the whole thing.
+	ri, err := ds.List()
+	if err != nil {
+		log.Printf("Failed to list resources: %v\n", err)
+	}
+	io.WriteString(w, adminListHeader)
+	for ri.HasNext() {
+		metadata, err := ri.Next()
+		if err != nil {
+			log.Printf("failed to list entry: %v\n", err)
+			continue
+		}
+		url := metadata.Url
+		translatedUrl, err := translateAbsoluteUrlToCachedUrl(url)
+		if err != nil {
+			log.Printf("failed to get cached URL for %s: %v\n", url, err)
+			continue
+		}
+		io.WriteString(w, "<tr>")
+		io.WriteString(w, fmt.Sprintf("<td class=\"source-url\"><a href=\"%s\">%s</a></td>\n", url, shortenedUrl(url)))
+		io.WriteString(w, fmt.Sprintf("<td><a href=\"%s\">Cached Page</a></td>\n", translatedUrl))
+		io.WriteString(w, "<td>Cache date unknown</td>\n")
+		io.WriteString(w, "</tr>")
+	}
+	io.WriteString(w, adminListFooter)
+}
+
 func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/javascript")
 	// TODO: Only evaluate this template once.
@@ -426,6 +511,7 @@ func main() {
 	http.HandleFunc("/", handleCreatePageRequest)
 	http.HandleFunc("/c/", handlePageRequest)
 	http.HandleFunc("/list", handleListRequest)
+	http.HandleFunc("/admin/list", handleAdminListRequest)
 	http.HandleFunc("/service-worker.js", handleServiceWorker)
 	baseName = fmt.Sprintf(baseNameFormat, *advertiseAddress)
 	log.Printf("Listening on %s", *listenAddress)
