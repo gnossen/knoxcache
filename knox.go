@@ -316,12 +316,6 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
 	}
 	defer resourceWriter.Close()
 
-	parsedUrl, parseErr := url.Parse(srcUrl)
-	if parseErr != nil {
-		log.Println("Failed to parse URL %s", parsedUrl)
-		return "", parseErr
-	}
-
 	for _, filteredHeaderKey := range filteredHeaderKeys {
 		if resp.Header.Get(filteredHeaderKey) != "" {
 			resp.Header.Del(filteredHeaderKey)
@@ -330,20 +324,9 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
 
 	resourceWriter.WriteHeaders(&resp.Header)
 
-	contentType := getContentType(&resp.Header)
-	log.Printf("  Saving as %s\n", contentType)
-	if contentType == "text/html" {
-		if err = transformHtml(parsedUrl, resp.Body, resourceWriter); err != nil {
-			return "", err
-		}
-	} else {
-		// TODO: Actually check for errors here.
-		_, err = io.Copy(resourceWriter, resp.Body)
-		if err != nil {
-			log.Println("Error saving '%s': %v", srcUrl, err)
-		}
+	if _, err = io.Copy(resourceWriter, resp.Body); err != nil {
+		return "", err
 	}
-	// TODO: Add special handler for CSS that parses and replaces references.
 
 	translated, err := translateAbsoluteUrlToCachedUrl(srcUrl)
 	if err != nil {
@@ -369,7 +352,30 @@ func serveExistingPage(encodedUrl string, w http.ResponseWriter) {
 			w.Header().Add(key, value)
 		}
 	}
-	io.Copy(w, f)
+
+	parsedUrl, parseErr := url.Parse(f.ResourceURL())
+	if parseErr != nil {
+		log.Println("Failed to parse URL %s: %v", parsedUrl, parseErr)
+		w.WriteHeader(400)
+		io.WriteString(w, fmt.Sprintf("Bad URL: %v", parseErr))
+		return
+	}
+
+	// Transform the page.
+	contentType := getContentType(f.Headers())
+	if contentType == "text/html" {
+		if err := transformHtml(parsedUrl, f, w); err != nil {
+			log.Println("Failed to transform HTML: %v", err)
+			w.WriteHeader(500)
+			io.WriteString(w, fmt.Sprintf("Failed to transform HTML: %v", err))
+			return
+		}
+	} else {
+		_, err := io.Copy(w, f)
+		if err != nil {
+			log.Println("Error serving '%s': %v", f.ResourceURL(), err)
+		}
+	}
 }
 
 func handlePageRequest(w http.ResponseWriter, r *http.Request) {

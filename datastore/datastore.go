@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const currentFileResourceReaderVersion = 1
+const currentFileResourceReaderVersion = 2
 
 type HeaderReader interface {
 	io.ReadCloser
