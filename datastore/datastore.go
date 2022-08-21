@@ -34,6 +34,15 @@ type ResourceWriter interface {
 	WriteHeaders(headers *http.Header) error
 }
 
+type ResourceMetadata struct {
+	Url string
+}
+
+type ResourceIterator interface {
+	Next() (ResourceMetadata, error)
+	HasNext() bool
+}
+
 type Datastore interface {
 	Exists(hashedUrl string) (bool, error)
 
@@ -43,6 +52,7 @@ type Datastore interface {
 	// Resource must not exist when this method is called.
 	Create(resourceURL string, hashedUrl string) (ResourceWriter, error)
 
+	List() (ResourceIterator, error)
 	// TODO: Might need to add Close method here as well once we add a networked
 	// db.
 
@@ -366,4 +376,39 @@ func (ds FileDatastore) Create(resourceURL string, hashedUrl string) (ResourceWr
 	}
 	var resourceWriter ResourceWriter = fileResourceWriter
 	return resourceWriter, nil
+}
+
+type fileResourceIterator struct {
+	rootPath   string
+	dirEntries []os.DirEntry
+	index      int
+}
+
+func (fri *fileResourceIterator) Next() (ResourceMetadata, error) {
+	// TODO: Filter out directories?
+	filename := fri.dirEntries[fri.index].Name()
+	fri.index += 1
+	f, err := os.Open(fri.rootPath + filename)
+	if err != nil {
+		return ResourceMetadata{}, fmt.Errorf("failed to open %s", filename)
+	}
+	rr, err := newFileResourceReader(f)
+	defer rr.Close()
+	if err != nil {
+		return ResourceMetadata{}, err
+	}
+	return ResourceMetadata{rr.ResourceURL()}, nil
+}
+
+func (fri *fileResourceIterator) HasNext() bool {
+	// TODO: Filter out directories?
+	return fri.index < len(fri.dirEntries)
+}
+
+func (ds FileDatastore) List() (ResourceIterator, error) {
+	files, err := os.ReadDir(ds.rootPath)
+	if err != nil {
+		return &fileResourceIterator{}, fmt.Errorf("failed to list files in %s", ds.rootPath)
+	}
+	return &fileResourceIterator{ds.rootPath, files, 0}, nil
 }

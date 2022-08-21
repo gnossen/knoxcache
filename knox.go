@@ -389,6 +389,31 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleListRequest(w http.ResponseWriter, r *http.Request) {
+	ri, err := ds.List()
+	if err != nil {
+		log.Printf("Failed to list resources: %v\n", err)
+	}
+
+	io.WriteString(w, "{\n  \"resources\": [\n")
+	for ri.HasNext() {
+		metadata, err := ri.Next()
+		if err != nil {
+			log.Printf("failed to list entry: %v\n", err)
+			continue
+		}
+		url := metadata.Url
+		io.WriteString(w, "    \"")
+		io.WriteString(w, url)
+		if ri.HasNext() {
+			io.WriteString(w, "\",\n")
+		} else {
+			io.WriteString(w, "\"\n")
+		}
+	}
+	io.WriteString(w, "  ]\n}\n")
+}
+
 func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "text/javascript")
 	// TODO: Only evaluate this template once.
@@ -400,6 +425,7 @@ func main() {
 	ds = datastore.NewFileDatastore(*datastoreRoot)
 	http.HandleFunc("/", handleCreatePageRequest)
 	http.HandleFunc("/c/", handlePageRequest)
+	http.HandleFunc("/list", handleListRequest)
 	http.HandleFunc("/service-worker.js", handleServiceWorker)
 	baseName = fmt.Sprintf(baseNameFormat, *advertiseAddress)
 	log.Printf("Listening on %s", *listenAddress)
