@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // TODO: How do we take time slicing into account?
@@ -93,6 +94,7 @@ const ipFooterFormatText = `
         </style>
 
         <div class="footer">
+            <p><a href="admin/list">Cached Resources</a></p>
             <p>Served from %s</p>
         </div>
 `
@@ -130,11 +132,19 @@ self.addEventListener('fetch', function(event) {
 });
 `
 
+// TODO: Dedupe some of this CSS.
+// TODO: Add doctype to everything.
+// TODO: Dark mode.
+
 const adminListHeader = `
+<!DOCTYPE html>
 <html>
     <style>
+        body {
+		  font-family: Sans-Serif;
+        }
         table {
-          width: 80vh;
+          width: 80%;
         }   
 		table, th, td {
 		  border: 1px solid black;
@@ -142,15 +152,16 @@ const adminListHeader = `
 		  padding: 4px;
 		  white-space: nowrap;
 		}
+        td {
+          padding-top: 0.5vh;
+          padding-bottom: 0.5vh;
+        }
         .source-url {
 		  overflow: hidden;
           overflow-x: hidden;
 		  text-overflow: ellipsis;
 		  -o-text-overflow: ellipsis;
         }
-		body {
-		  font-family: Sans-Serif;
-		}
     </style>
     <head>
         <title>Knox Admin List</title>
@@ -492,8 +503,8 @@ func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		io.WriteString(w, "<tr>")
 		io.WriteString(w, fmt.Sprintf("<td class=\"source-url\"><a href=\"%s\">%s</a></td>\n", url, shortenedUrl(url)))
-		io.WriteString(w, fmt.Sprintf("<td><a href=\"%s\">Cached Page</a></td>\n", translatedUrl))
-		io.WriteString(w, "<td>Cache date unknown</td>\n")
+		io.WriteString(w, fmt.Sprintf("<td><a href=\"%s\">Cached</a></td>\n", translatedUrl))
+		io.WriteString(w, fmt.Sprintf("<td>%s</td>\n", metadata.CreationTime.Format(time.UnixDate)))
 		io.WriteString(w, "</tr>")
 	}
 	io.WriteString(w, adminListFooter)

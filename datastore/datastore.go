@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const currentFileResourceReaderVersion = 1
@@ -35,7 +37,8 @@ type ResourceWriter interface {
 }
 
 type ResourceMetadata struct {
-	Url string
+	Url          string
+	CreationTime time.Time
 }
 
 type ResourceIterator interface {
@@ -388,7 +391,19 @@ func (fri *fileResourceIterator) Next() (ResourceMetadata, error) {
 	// TODO: Filter out directories?
 	filename := fri.dirEntries[fri.index].Name()
 	fri.index += 1
-	f, err := os.Open(fri.rootPath + filename)
+
+	filePath := fri.rootPath + filename
+
+	var creationTime time.Time
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		creationTime = time.UnixMilli(0)
+	} else {
+		stat := fi.Sys().(*syscall.Stat_t)
+		creationTime = time.Unix(int64(stat.Ctim.Sec), int64(stat.Ctim.Nsec))
+	}
+
+	f, err := os.Open(filePath)
 	if err != nil {
 		return ResourceMetadata{}, fmt.Errorf("failed to open %s", filename)
 	}
@@ -397,7 +412,8 @@ func (fri *fileResourceIterator) Next() (ResourceMetadata, error) {
 	if err != nil {
 		return ResourceMetadata{}, err
 	}
-	return ResourceMetadata{rr.ResourceURL()}, nil
+
+	return ResourceMetadata{rr.ResourceURL(), creationTime}, nil
 }
 
 func (fri *fileResourceIterator) HasNext() bool {
