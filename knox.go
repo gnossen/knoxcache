@@ -19,9 +19,6 @@ import (
 
 // TODO: How do we take time slicing into account?
 
-// TODO: Get this from config somehow.
-// TODO: Change to http://c/
-const baseNameFormat = "http://%s/c/"
 const defaultListenHost = "0.0.0.0"
 const defaultPort = "8080"
 
@@ -186,16 +183,15 @@ const adminListFooter = `
 `
 
 // URL is assumed to be a normalized absolute URL.
-func translateAbsoluteUrlToCachedUrl(toTranslate string) (string, error) {
+func translateAbsoluteUrlToCachedUrl(toTranslate string, protocol string, host string) (string, error) {
 	encoded, err := encoder.Encode(toTranslate)
 	if err != nil {
 		return "", nil
 	}
-	return baseName + encoded, nil
+	return fmt.Sprintf("%s://%s/c/%s", protocol, host, encoded), nil
 }
 
-// Should we do a sha256 hash or what?
-func translateCachedUrl(toTranslate string, baseUrl *url.URL) (string, error) {
+func translateCachedUrl(toTranslate string, baseUrl *url.URL, protocol string, host string) (string, error) {
 	parsedUrl, err := url.Parse(toTranslate)
 	if err != nil {
 		return "", err
@@ -206,18 +202,18 @@ func translateCachedUrl(toTranslate string, baseUrl *url.URL) (string, error) {
 	} else {
 		absoluteUrl = parsedUrl
 	}
-	translated, err := translateAbsoluteUrlToCachedUrl(absoluteUrl.String())
+	translated, err := translateAbsoluteUrlToCachedUrl(absoluteUrl.String(), protocol, host)
 	if err != nil {
 		return "", err
 	}
 	return translated, nil
 }
 
-func modifyLink(tag string, node *html.Node, baseUrl *url.URL) {
+func modifyLink(tag string, node *html.Node, baseUrl *url.URL, protocol string, host string) {
 	for i, attr := range node.Attr {
 		for _, linkAttr := range linkAttrs[tag] {
 			if attr.Key == linkAttr {
-				translated, err := translateCachedUrl(node.Attr[i].Val, baseUrl)
+				translated, err := translateCachedUrl(node.Attr[i].Val, baseUrl, protocol, host)
 				if err != nil {
 					fmt.Println("Failed to parse as URL.")
 					continue
@@ -260,12 +256,12 @@ func getContentType(headers *http.Header) string {
 }
 
 // TODO: Cache the transformation if it becomes a bottleneck.
-func transformHtml(resourceUrl *url.URL, in io.Reader, out io.Writer) error {
+func transformHtml(resourceUrl *url.URL, in io.Reader, out io.Writer, protocol string, host string) error {
 	var visitNode func(node *html.Node)
 	visitNode = func(node *html.Node) {
 		if node.Type == html.ElementNode {
 			if _, ok := linkAttrs[node.Data]; ok {
-				modifyLink(node.Data, node, resourceUrl)
+				modifyLink(node.Data, node, resourceUrl, protocol, host)
 			}
 		}
 		for c := node.FirstChild; c != nil; c = c.NextSibling {
@@ -289,7 +285,7 @@ func transformHtml(resourceUrl *url.URL, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string, error) {
+func cachePage(srcUrl string, ds datastore.Datastore, userAgent string, protocol string, host string) (string, error) {
 	encodedUrl, err := encoder.Encode(srcUrl)
 	if err != nil {
 		return "", err
@@ -328,14 +324,14 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string) (string,
 		return "", err
 	}
 
-	translated, err := translateAbsoluteUrlToCachedUrl(srcUrl)
+	translated, err := translateAbsoluteUrlToCachedUrl(srcUrl, protocol, host)
 	if err != nil {
 		return "", err
 	}
 	return translated, nil
 }
 
-func serveExistingPage(encodedUrl string, w http.ResponseWriter) {
+func serveExistingPage(encodedUrl string, w http.ResponseWriter, protocol string, host string) {
 	f, openErr := ds.Open(encodedUrl)
 	if openErr != nil {
 		log.Printf("Failed to open file for hash %s: %v", encodedUrl, openErr)
@@ -364,7 +360,7 @@ func serveExistingPage(encodedUrl string, w http.ResponseWriter) {
 	// Transform the page.
 	contentType := getContentType(f.Headers())
 	if contentType == "text/html" {
-		if err := transformHtml(parsedUrl, f, w); err != nil {
+		if err := transformHtml(parsedUrl, f, w, protocol, host); err != nil {
 			log.Println("Failed to transform HTML: %v", err)
 			w.WriteHeader(500)
 			io.WriteString(w, fmt.Sprintf("Failed to transform HTML: %v", err))
@@ -376,6 +372,20 @@ func serveExistingPage(encodedUrl string, w http.ResponseWriter) {
 			log.Println("Error serving '%s': %v", f.ResourceURL(), err)
 		}
 	}
+}
+
+func getProtocol(r *http.Request) string {
+	if proto := r.Header.Get("X-Forwarded-Protocol"); proto != "" {
+		return proto
+	}
+	return "http"
+}
+
+func getHost(r *http.Request) string {
+	if hostHeader := r.Host; hostHeader != "" {
+		return hostHeader
+	}
+	return baseName
 }
 
 func handlePageRequest(w http.ResponseWriter, r *http.Request) {
@@ -405,7 +415,7 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, msg)
 			return
 		}
-		_, err = cachePage(decodedUrl, ds, r.Header.Get("User-Agent"))
+		_, err = cachePage(decodedUrl, ds, r.Header.Get("User-Agent"), getProtocol(r), getHost(r))
 		if err != nil {
 			// TODO: Figure out how to dedupe this.
 			w.WriteHeader(500)
@@ -413,12 +423,10 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, msg)
 			return
 		}
-		serveExistingPage(encodedUrl, w)
-		return
-	} else {
-		serveExistingPage(encodedUrl, w)
-		return
 	}
+
+	serveExistingPage(encodedUrl, w, getProtocol(r), getHost(r))
+	return
 }
 
 func queryError(w http.ResponseWriter) {
@@ -447,7 +455,7 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		} else {
 			requestedUrl := requestedUrls[0]
-			cachedUrl, err := cachePage(requestedUrl, ds, r.Header.Get("User-Agent"))
+			cachedUrl, err := cachePage(requestedUrl, ds, r.Header.Get("User-Agent"), getProtocol(r), getHost(r))
 			if err != nil {
 				w.WriteHeader(500)
 				msg := fmt.Sprintf("Failed to cache page: %v", err)
@@ -515,7 +523,7 @@ func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		url := metadata.Url
-		translatedUrl, err := translateAbsoluteUrlToCachedUrl(url)
+		translatedUrl, err := translateAbsoluteUrlToCachedUrl(url, getProtocol(r), getHost(r))
 		if err != nil {
 			log.Printf("failed to get cached URL for %s: %v\n", url, err)
 			continue
@@ -543,7 +551,7 @@ func main() {
 	http.HandleFunc("/list", handleListRequest)
 	http.HandleFunc("/admin/list", handleAdminListRequest)
 	http.HandleFunc("/service-worker.js", handleServiceWorker)
-	baseName = fmt.Sprintf(baseNameFormat, *advertiseAddress)
+	baseName = *advertiseAddress
 	log.Printf("Listening on %s", *listenAddress)
 	log.Fatal(http.ListenAndServe(*listenAddress, nil))
 }
