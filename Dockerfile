@@ -1,4 +1,4 @@
-FROM golang:1.16-stretch
+FROM golang:1.18-stretch
 
 COPY . /build
 

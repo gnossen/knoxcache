@@ -375,7 +375,7 @@ func serveExistingPage(encodedUrl string, w http.ResponseWriter, protocol string
 }
 
 func getProtocol(r *http.Request) string {
-	if proto := r.Header.Get("X-Forwarded-Protocol"); proto != "" {
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
 		return proto
 	}
 	return "http"
