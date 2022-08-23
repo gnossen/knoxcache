@@ -1,0 +1,14 @@
+- Switch from custom file format to sqlite
+- Support HEAD verb
+- Add functionality for caching if no version exists
+- Support multiple versions of the same resource
+    - Add metadata page per-resource
+    - Add links to specific versions
+    - Subprocess-based test suite
+    - Support storage of diffs between different versions
+- Support size tracking
+- Support storage of different HTTP status codes
+- include headers in cache key
+- Provide CLI for reading files in cache on fs?
+
+- implement podbay

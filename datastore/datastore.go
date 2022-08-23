@@ -13,6 +13,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+    _ "gorm.io/gorm"
+    _ "gorm.io/driver/sqlite"
 )
 
 const currentFileResourceReaderVersion = 2
