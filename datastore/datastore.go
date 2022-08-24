@@ -249,15 +249,6 @@ func NewFileDatastore(rootPath string) (FileDatastore, error) {
 	return FileDatastore{rootPath, db}, nil
 }
 
-// TODO: Filesystems have a hard limit on length of filenames. Need to shorten
-// by, e.g. hashing.
-func (ds FileDatastore) translateUrlToFilePath(hashedUrl string) string {
-	h := sha512.New()
-	h.Write([]byte(hashedUrl))
-	fileName := hex.EncodeToString(h.Sum(nil))
-	return ds.rootPath + fileName
-}
-
 func (ds FileDatastore) Exists(hashedUrl string) (bool, error) {
 	rm := resourceMetadata{}
 	result := ds.db.First(&rm, "hashed_url = ?", hashedUrl)
@@ -352,26 +343,26 @@ func (ds FileDatastore) Create(resourceURL string, hashedUrl string) (ResourceWr
 }
 
 type fileResourceIterator struct {
-	rootPath   string
-	dirEntries []os.DirEntry
-	index      int
+	rootPath string
+	rms      *[]resourceMetadata
+	index    int
 }
 
 func (fri *fileResourceIterator) Next() (ResourceMetadata, error) {
-	panic("TODO: Implement")
+	rm := (*fri.rms)[fri.index]
 	fri.index += 1
-	return ResourceMetadata{}, nil
+	return ResourceMetadata{rm.Url, rm.DownloadStarted}, nil
 }
 
 func (fri *fileResourceIterator) HasNext() bool {
-	// TODO: Filter out directories?
-	return fri.index < len(fri.dirEntries)
+	return fri.index < len(*fri.rms)
 }
 
 func (ds FileDatastore) List() (ResourceIterator, error) {
-	files, err := os.ReadDir(ds.rootPath)
-	if err != nil {
-		return &fileResourceIterator{}, fmt.Errorf("failed to list files in %s", ds.rootPath)
+	var rms []resourceMetadata
+	result := ds.db.Order("download_started desc").Find(&rms)
+	if result.Error != nil {
+		return nil, result.Error
 	}
-	return &fileResourceIterator{ds.rootPath, files, 0}, nil
+	return &fileResourceIterator{ds.rootPath, &rms, 0}, nil
 }

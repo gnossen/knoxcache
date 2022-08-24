@@ -1,8 +1,10 @@
-- Switch from custom file format to sqlite
+- Switch from custom file format to sqlite x
     - Create Path x
     - Open path x
     - Exists path x
-    - List path
+    - List path x
+- Add pagination to list
+- gzip contents
 - Support HEAD verb
 - Add functionality for caching if no version exists
 - Support multiple versions of the same resource
