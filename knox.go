@@ -13,6 +13,8 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -22,7 +24,11 @@ import (
 const defaultListenHost = "0.0.0.0"
 const defaultPort = "8080"
 
-const maxUrlSize = 160
+const maxUrlDisplaySize = 160
+
+const maxResourcesPerPage = 100
+
+var adminListRegex *regexp.Regexp
 
 var advertiseAddress = flag.String("advertise-address", "localhost:8080", "The address at which the service will be accessible.")
 var listenAddress = flag.String("listen-address", "0.0.0.0:8080", "The address at which the service will listen.")
@@ -91,7 +97,7 @@ const ipFooterFormatText = `
         </style>
 
         <div class="footer">
-            <p><a href="admin/list">Cached Resources</a></p>
+            <p><a href="admin/list/0">Cached Resources</a></p>
             <p>Served from %s</p>
         </div>
 `
@@ -175,8 +181,6 @@ const adminListHeader = `
 `
 
 const adminListFooter = `
-        </table>
-        </div>
 		</center>
     </body>
 </html>
@@ -476,46 +480,31 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleListRequest(w http.ResponseWriter, r *http.Request) {
-	ri, err := ds.List()
-	if err != nil {
-		log.Printf("Failed to list resources: %v\n", err)
-	}
-
-	io.WriteString(w, "{\n  \"resources\": [\n")
-	for ri.HasNext() {
-		metadata, err := ri.Next()
-		if err != nil {
-			log.Printf("failed to list entry: %v\n", err)
-			continue
-		}
-		url := metadata.Url
-		io.WriteString(w, "    \"")
-		io.WriteString(w, url)
-		if ri.HasNext() {
-			io.WriteString(w, "\",\n")
-		} else {
-			io.WriteString(w, "\"\n")
-		}
-	}
-	io.WriteString(w, "  ]\n}\n")
-}
-
 func shortenedUrl(url string) string {
-	if len(url) <= maxUrlSize {
+	if len(url) <= maxUrlDisplaySize {
 		return url
 	}
-	return url[0:maxUrlSize] + "..."
+	return url[0:maxUrlDisplaySize] + "..."
 }
 
 func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 	// TODO: Figure out a way to write resource count and total size at
 	// beginning without first having to iterate through the whole thing.
-	ri, err := ds.List()
+
+	pageNumStr := adminListRegex.FindAllStringSubmatch(r.URL.Path, -1)[0][1]
+	pageNum, err := strconv.Atoi(pageNumStr)
+	if err != nil {
+		log.Printf("%v", adminListRegex)
+		w.WriteHeader(500)
+		io.WriteString(w, fmt.Sprintf("Internal error: %v", err))
+		return
+	}
+	ri, err := ds.List(pageNum*maxResourcesPerPage, maxResourcesPerPage)
 	if err != nil {
 		log.Printf("Failed to list resources: %v\n", err)
 	}
 	io.WriteString(w, adminListHeader)
+	resourceCount := 0
 	for ri.HasNext() {
 		metadata, err := ri.Next()
 		if err != nil {
@@ -533,6 +522,18 @@ func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, fmt.Sprintf("<td><a href=\"%s\">Cached</a></td>\n", translatedUrl))
 		io.WriteString(w, fmt.Sprintf("<td>%s</td>\n", metadata.CreationTime.Format(time.UnixDate)))
 		io.WriteString(w, "</tr>")
+		resourceCount += 1
+	}
+	io.WriteString(w, "</table></div><br />")
+
+	noMoreResources := (resourceCount != maxResourcesPerPage)
+
+	if pageNum != 0 {
+		io.WriteString(w, fmt.Sprintf("<a href=\"admin/list/%d\">&lt; previous</a> &nbsp;&nbsp;", pageNum-1))
+	}
+
+	if !noMoreResources {
+		io.WriteString(w, fmt.Sprintf("<a href=\"admin/list/%d\">next &gt;</a>", pageNum+1))
 	}
 	io.WriteString(w, adminListFooter)
 }
@@ -552,9 +553,14 @@ func main() {
 	}
 	http.HandleFunc("/", handleCreatePageRequest)
 	http.HandleFunc("/c/", handlePageRequest)
-	http.HandleFunc("/list", handleListRequest)
-	http.HandleFunc("/admin/list", handleAdminListRequest)
+	http.HandleFunc("/admin/list/", handleAdminListRequest)
 	http.HandleFunc("/service-worker.js", handleServiceWorker)
+
+	adminListRegex, err = regexp.Compile("/admin/list/([0-9]+)")
+	if err != nil {
+		panic(fmt.Sprintf("Failed to compile /admin/list regex: %v", err))
+	}
+
 	baseName = *advertiseAddress
 	log.Printf("Listening on %s", *listenAddress)
 	log.Fatal(http.ListenAndServe(*listenAddress, nil))

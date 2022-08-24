@@ -3,9 +3,7 @@ package datastore
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha512"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -59,8 +57,7 @@ type Datastore interface {
 	// Resource must not exist when this method is called.
 	Create(resourceURL string, hashedUrl string) (ResourceWriter, error)
 
-	// TODO: Add pagination.
-	List() (ResourceIterator, error)
+	List(offset, count int) (ResourceIterator, error)
 	// TODO: Might need to add Close method here as well once we add a networked
 	// db.
 
@@ -358,9 +355,9 @@ func (fri *fileResourceIterator) HasNext() bool {
 	return fri.index < len(*fri.rms)
 }
 
-func (ds FileDatastore) List() (ResourceIterator, error) {
+func (ds FileDatastore) List(offset, count int) (ResourceIterator, error) {
 	var rms []resourceMetadata
-	result := ds.db.Order("download_started desc").Find(&rms)
+	result := ds.db.Limit(count).Offset(offset).Order("download_started desc").Find(&rms)
 	if result.Error != nil {
 		return nil, result.Error
 	}
