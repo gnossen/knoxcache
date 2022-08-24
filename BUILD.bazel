@@ -28,6 +28,10 @@ go_test(
         "datastore/datastore_test.go",
         "datastore/datastore.go"
    ],
+   deps = [
+     "@com_github_go_gorm_gorm//:gorm",
+     "@io_gorm_driver_sqlite//:sqlite",
+   ],
 )
 
 go_binary(

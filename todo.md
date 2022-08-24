@@ -1,4 +1,8 @@
 - Switch from custom file format to sqlite
+    - Create Path x
+    - Open path x
+    - Exists path x
+    - List path
 - Support HEAD verb
 - Add functionality for caching if no version exists
 - Support multiple versions of the same resource
@@ -9,6 +13,7 @@
 - Support size tracking
 - Support storage of different HTTP status codes
 - include headers in cache key
+    - This needs some more thought
 - Provide CLI for reading files in cache on fs?
 
 - implement podbay

@@ -545,7 +545,11 @@ func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
-	ds = datastore.NewFileDatastore(*datastoreRoot)
+	var err error
+	ds, err = datastore.NewFileDatastore(*datastoreRoot)
+	if err != nil {
+		panic(err)
+	}
 	http.HandleFunc("/", handleCreatePageRequest)
 	http.HandleFunc("/c/", handlePageRequest)
 	http.HandleFunc("/list", handleListRequest)

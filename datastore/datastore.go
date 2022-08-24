@@ -6,19 +6,20 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
-    _ "gorm.io/gorm"
-    _ "gorm.io/driver/sqlite"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
-const currentFileResourceReaderVersion = 2
+const sqliteFilename = "knox.db"
 
 type HeaderReader interface {
 	io.ReadCloser
@@ -58,10 +59,33 @@ type Datastore interface {
 	// Resource must not exist when this method is called.
 	Create(resourceURL string, hashedUrl string) (ResourceWriter, error)
 
+	// TODO: Add pagination.
 	List() (ResourceIterator, error)
 	// TODO: Might need to add Close method here as well once we add a networked
 	// db.
 
+}
+
+type resourceMetadata struct {
+	gorm.Model
+
+	// Hashed URL
+	HashedUrl string
+
+	// Original URL.
+	Url string
+
+	// Request Headers.
+	RequestHeaders string
+
+	// Response Headers
+	ResponseHeaders string
+
+	// Time download initiated.
+	DownloadStarted time.Time
+
+	// Time download finished.
+	DownloadFinished time.Time
 }
 
 func splitHeaderPair(data []byte, atEOF bool) (advance int, token []byte, err error) {
@@ -88,114 +112,14 @@ func (e headerParseError) Error() string {
 	return e.msg
 }
 
-// TODO: Modify to use our own buffer instead of bufio so that we can guarantee
-// that we only read up to n characters.
-// Reads headers in wire format exactly of length n into the header.
-func readHeaders(reader io.Reader) (*http.Header, error) {
-	headers := make(http.Header)
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		pairBytes := scanner.Bytes()
-		if len(pairBytes) == 0 {
-			// Empty line.
-			break
-		}
-		pairScanner := bufio.NewScanner(bytes.NewReader(pairBytes))
-		pairScanner.Split(splitHeaderPair)
-		if !pairScanner.Scan() {
-			return nil, headerParseError{fmt.Sprintf("Did not find a colon in header pair: %s", string(pairBytes))}
-		}
-		rawKey := pairScanner.Text()
-		key := strings.TrimRight(rawKey, " \t")
-		value := strings.TrimLeft(string(pairBytes[len(rawKey)+1:]), " \t")
-		currentValues, ok := headers[key]
-		if !ok {
-			headers[key] = []string{value}
-		} else {
-			headers[key] = append(currentValues, value)
-		}
-	}
-	return &headers, nil
-}
-
 type FileResourceReader struct {
 	f           *os.File
 	resourceURL string
-	headers     *http.Header
+	// TODO: Change name to response headers
+	headers *http.Header
 }
 
-func readUint64(f io.Reader) (uint64, error) {
-	buf := []byte{0, 0, 0, 0, 0, 0, 0, 0}
-	n, err := f.Read(buf)
-	if err != nil {
-		return 0, err
-	}
-	if n != len(buf) {
-		return 0, fmt.Errorf("Attempted to read 8 bytes, but only found %d.", n)
-	}
-	return binary.LittleEndian.Uint64(buf), nil
-}
-
-// Reads a string prefixed by its own length, as a uint64.
-func readLengthPrefixedString(f io.Reader) (string, error) {
-	strLen, err := readUint64(f)
-	if err != nil {
-		return "", fmt.Errorf("failed to read string length: %v", err)
-	}
-	buf := new(strings.Builder)
-	_, err = io.CopyN(buf, f, int64(strLen))
-	if err != nil {
-		return "", fmt.Errorf("failed to read string: %v", err)
-	}
-	return buf.String(), nil
-}
-
-func newFileResourceReader(f *os.File) (FileResourceReader, error) {
-	var preambleLength uint64 = 0
-	// TODO: Have readUint64 return its length.
-	fileFormatVersion, err := readUint64(f)
-	if err != nil {
-		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Failed to read file format version: %v", f.Name(), err)
-	}
-	preambleLength += 8
-
-	if fileFormatVersion != currentFileResourceReaderVersion {
-		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Unsupported file format version: %d. Supported versions: [%d]", f.Name(), fileFormatVersion, currentFileResourceReaderVersion)
-	}
-
-	// TODO: Have readLengthPrefixedString return its length.
-	resourceURL, err := readLengthPrefixedString(f)
-	if err != nil {
-		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Failed to read resource URL: %v", f.Name(), err)
-	}
-
-	preambleLength += 8
-	preambleLength += uint64(len(resourceURL))
-
-	headerLength, err := readUint64(f)
-	if err != nil {
-		return FileResourceReader{nil, "", &http.Header{}}, fmt.Errorf("%s: Failed to read header length: %v", f.Name(), err)
-	}
-
-	preambleLength += 8
-	preambleLength += headerLength
-
-	// Read headers
-	var headers *http.Header
-	if headerLength != 0 {
-		headers, err = readHeaders(f)
-	} else {
-		headers = &http.Header{}
-	}
-	if err != nil {
-		return FileResourceReader{nil, "", &http.Header{}}, err
-	}
-
-	// Seek to beginning of content.
-	_, err = f.Seek(int64(preambleLength), 0)
-	if err != nil {
-		return FileResourceReader{nil, "", &http.Header{}}, err
-	}
+func newFileResourceReader(f *os.File, resourceURL string, headers *http.Header) (FileResourceReader, error) {
 	return FileResourceReader{f, resourceURL, headers}, nil
 }
 
@@ -216,10 +140,10 @@ func (rr FileResourceReader) ResourceURL() string {
 }
 
 type FileResourceWriter struct {
-	f               *os.File
-	headers         *http.Header
-	resourceURL     string
-	preambleWritten bool
+	f       *os.File
+	headers *http.Header
+	id      uint
+	ds      *FileDatastore
 }
 
 func writeUint64(output uint64, w io.Writer) (int, error) {
@@ -252,71 +176,46 @@ func writeLengthPrefixedString(s string, w io.Writer) (int, error) {
 	return lenWritten, nil
 }
 
-func (rw *FileResourceWriter) writeHeaders() (int, error) {
+func headersAsString(headers *http.Header) (string, error) {
+	if headers == nil {
+		return "", nil
+	}
 	var headersBuffer bytes.Buffer
-	if rw.headers != nil {
-		if err := rw.headers.Write(&headersBuffer); err != nil {
-			return 0, err
-		}
-		// Need an extra CRLF to mark the end of the headers.
-		if _, err := headersBuffer.Write([]byte("\r\n")); err != nil {
-			return 0, err
-		}
+	if err := headers.Write(&headersBuffer); err != nil {
+		return "", err
 	}
-	totalWritten := 0
-
-	headerLength := uint64(headersBuffer.Len())
-	headerLengthWritten, err := writeUint64(headerLength, rw.f)
-	totalWritten += headerLengthWritten
-	if err != nil {
-		return totalWritten, fmt.Errorf("Failed to write length of HTTP headers: %v", err)
+	// Need an extra CRLF to mark the end of the headers.
+	if _, err := headersBuffer.Write([]byte("\r\n")); err != nil {
+		return "", err
 	}
-
-	headersBodyLengthWritten, err := io.Copy(rw.f, &headersBuffer)
-	totalWritten += int(headersBodyLengthWritten)
-	if err != nil {
-		return totalWritten, err
-	}
-	if uint64(headersBodyLengthWritten) != headerLength {
-		return totalWritten, fmt.Errorf("Failed to write headers. Expected to write %d bytes but wrote %d.", 8, headerLength, headersBodyLengthWritten)
-	}
-	return totalWritten, nil
-}
-
-func (rw *FileResourceWriter) writePreamble() (int, error) {
-	lenWritten := 0
-	n, err := writeUint64(uint64(currentFileResourceReaderVersion), rw.f)
-	if err != nil {
-		return lenWritten, fmt.Errorf("failed to write file format version: %v", err)
-	}
-	lenWritten += n
-	n, err = writeLengthPrefixedString(rw.resourceURL, rw.f)
-	lenWritten += n
-	if err != nil {
-		return lenWritten, fmt.Errorf("failed to write url '%s': %v", rw.resourceURL, err)
-	}
-	headerLen, err := rw.writeHeaders()
-	lenWritten += headerLen
-	if err != nil {
-		return lenWritten, err
-	}
-	rw.preambleWritten = true
-	return lenWritten, nil
+	return headersBuffer.String(), nil
 }
 
 func (rw *FileResourceWriter) Write(b []byte) (int, error) {
-	var preambleLen int
-	if !rw.preambleWritten {
-		preambleLen, err := rw.writePreamble()
-		if err != nil {
-			return preambleLen, fmt.Errorf("Failed to write preamble: %v", err)
-		}
-	}
 	bodyLen, err := rw.f.Write(b)
-	return preambleLen + bodyLen, err
+	return bodyLen, err
+}
+
+func (rw *FileResourceWriter) writeFinalMetadata() error {
+	responseHeaders, err := headersAsString(rw.headers)
+	if err != nil {
+		return err
+	}
+	rm := resourceMetadata{}
+	result := rw.ds.db.Model(&rm).Where("id = ?", rw.id).Updates(map[string]interface{}{
+		"response_headers":  responseHeaders,
+		"download_finished": time.Now(),
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	return nil
 }
 
 func (rw *FileResourceWriter) Close() error {
+	if err := rw.writeFinalMetadata(); err != nil {
+		return err
+	}
 	return rw.f.Close()
 }
 
@@ -325,21 +224,29 @@ func (rw *FileResourceWriter) WriteHeaders(headers *http.Header) error {
 	return nil
 }
 
-func newFileResourceWriter(f *os.File, resourceURL string) (*FileResourceWriter, error) {
-	return &FileResourceWriter{f, nil, resourceURL, false}, nil
+func newFileResourceWriter(f *os.File, id uint, ds *FileDatastore) (*FileResourceWriter, error) {
+	return &FileResourceWriter{f, nil, id, ds}, nil
 }
 
 type FileDatastore struct {
 	rootPath string
+	db       *gorm.DB
 }
 
-func NewFileDatastore(rootPath string) FileDatastore {
+func NewFileDatastore(rootPath string) (FileDatastore, error) {
 	// Must end in a slash.
 	if rootPath != "" && !strings.HasSuffix(rootPath, "/") {
 		rootPath += "/"
 	}
 	// TODO: Check if it exists first.
-	return FileDatastore{rootPath}
+	db, err := gorm.Open(sqlite.Open(rootPath+sqliteFilename), &gorm.Config{})
+	if err != nil {
+		return FileDatastore{}, err
+	}
+	if err = db.AutoMigrate(&resourceMetadata{}); err != nil {
+		return FileDatastore{}, err
+	}
+	return FileDatastore{rootPath, db}, nil
 }
 
 // TODO: Filesystems have a hard limit on length of filenames. Need to shorten
@@ -352,31 +259,91 @@ func (ds FileDatastore) translateUrlToFilePath(hashedUrl string) string {
 }
 
 func (ds FileDatastore) Exists(hashedUrl string) (bool, error) {
-	filepath := ds.translateUrlToFilePath(hashedUrl)
-	_, err := os.Stat(filepath)
-	if err == nil {
+	rm := resourceMetadata{}
+	result := ds.db.First(&rm, "hashed_url = ?", hashedUrl)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return false, nil
+	} else if result.Error != nil {
+		return false, result.Error
+	} else {
 		return true, nil
 	}
-	if os.IsNotExist(err) {
-		return false, nil
+}
+
+func readHeaders(hs string) (*http.Header, error) {
+	headerBuffer := bytes.NewBufferString(hs)
+	headers := make(http.Header)
+	scanner := bufio.NewScanner(headerBuffer)
+	for scanner.Scan() {
+		pairBytes := scanner.Bytes()
+		if len(pairBytes) == 0 {
+			// Empty line.
+			break
+		}
+		pairScanner := bufio.NewScanner(bytes.NewReader(pairBytes))
+		pairScanner.Split(splitHeaderPair)
+		if !pairScanner.Scan() {
+			return nil, headerParseError{fmt.Sprintf("Did not find a colon in header pair: %s", string(pairBytes))}
+		}
+		rawKey := pairScanner.Text()
+		key := strings.TrimRight(rawKey, " \t")
+		value := strings.TrimLeft(string(pairBytes[len(rawKey)+1:]), " \t")
+		currentValues, ok := headers[key]
+		if !ok {
+			headers[key] = []string{value}
+		} else {
+			headers[key] = append(currentValues, value)
+		}
 	}
-	return false, err
+	return &headers, nil
 }
 
 func (ds FileDatastore) Open(hashedUrl string) (ResourceReader, error) {
-	f, err := os.Open(ds.translateUrlToFilePath(hashedUrl))
+	rm := resourceMetadata{}
+	result := ds.db.First(&rm, "hashed_url = ?", hashedUrl)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	f, err := os.Open(ds.rootPath + strconv.FormatUint(uint64(rm.ID), 10))
 	if err != nil {
 		return nil, err
 	}
-	return newFileResourceReader(f)
+	headers, err := readHeaders(rm.ResponseHeaders)
+	if err != nil {
+		return nil, err
+	}
+	return newFileResourceReader(f, rm.Url, headers)
+}
+
+func (ds FileDatastore) createStubRecord(resourceUrl, hashedUrl string) (uint, error) {
+	// TODO: Actually collect requestHeaders
+	rm := &resourceMetadata{
+		gorm.Model{},
+		hashedUrl,
+		resourceUrl,
+		"",
+		"",
+		time.Now(),
+		time.UnixMicro(0),
+	}
+	result := ds.db.Create(&rm)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return rm.ID, nil
 }
 
 func (ds FileDatastore) Create(resourceURL string, hashedUrl string) (ResourceWriter, error) {
-	f, err := os.Create(ds.translateUrlToFilePath(hashedUrl))
+	id, err := ds.createStubRecord(resourceURL, hashedUrl)
 	if err != nil {
 		return nil, err
 	}
-	fileResourceWriter, err := newFileResourceWriter(f, resourceURL)
+
+	f, err := os.Create(ds.rootPath + strconv.FormatUint(uint64(id), 10))
+	if err != nil {
+		return nil, err
+	}
+	fileResourceWriter, err := newFileResourceWriter(f, id, &ds)
 	if err != nil {
 		return nil, err
 	}
@@ -391,32 +358,9 @@ type fileResourceIterator struct {
 }
 
 func (fri *fileResourceIterator) Next() (ResourceMetadata, error) {
-	// TODO: Filter out directories?
-	filename := fri.dirEntries[fri.index].Name()
+	panic("TODO: Implement")
 	fri.index += 1
-
-	filePath := fri.rootPath + filename
-
-	var creationTime time.Time
-	fi, err := os.Stat(filePath)
-	if err != nil {
-		creationTime = time.UnixMilli(0)
-	} else {
-		stat := fi.Sys().(*syscall.Stat_t)
-		creationTime = time.Unix(int64(stat.Ctim.Sec), int64(stat.Ctim.Nsec))
-	}
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return ResourceMetadata{}, fmt.Errorf("failed to open %s", filename)
-	}
-	rr, err := newFileResourceReader(f)
-	defer rr.Close()
-	if err != nil {
-		return ResourceMetadata{}, err
-	}
-
-	return ResourceMetadata{rr.ResourceURL(), creationTime}, nil
+	return ResourceMetadata{}, nil
 }
 
 func (fri *fileResourceIterator) HasNext() bool {

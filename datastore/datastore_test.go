@@ -36,8 +36,7 @@ f : g
 h : i : j
 
 foo`
-	reader := bytes.NewReader([]byte(inputString))
-	actualHeaders, err := readHeaders(reader)
+	actualHeaders, err := readHeaders(inputString)
 	if err != nil {
 		t.Fatalf("Failed to read headers: %v", err)
 	}
@@ -90,6 +89,7 @@ func randomHttpResource(r *rand.Rand) HttpResource {
 
 func createHttpResource(t *testing.T, ds Datastore, hr HttpResource) {
 	rw, err := ds.Create(hr.resourceUrl, hr.hashedUrl)
+	defer rw.Close()
 	if err != nil {
 		t.Fatalf("Failed to create resource %v: %v", hr, err)
 	}
@@ -138,7 +138,10 @@ func TestInvolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test temp dir: %v", err)
 	}
-	ds := NewFileDatastore(datastoreRoot)
+	ds, err := NewFileDatastore(datastoreRoot)
+	if err != nil {
+		t.Fatalf("Failed to create FileDatastore: %v", err)
+	}
 	hr := randomHttpResource(r)
 	createHttpResource(t, &ds, hr)
 	hr2 := readHttpResource(t, ds, hr.hashedUrl)
