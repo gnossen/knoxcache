@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"path"
 	"reflect"
 	"testing"
 )
@@ -138,7 +139,7 @@ func TestInvolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create test temp dir: %v", err)
 	}
-	ds, err := NewFileDatastore(datastoreRoot)
+	ds, err := NewFileDatastore(path.Join(datastoreRoot, "knox.db"), datastoreRoot)
 	if err != nil {
 		t.Fatalf("Failed to create FileDatastore: %v", err)
 	}

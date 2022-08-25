@@ -16,8 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const sqliteFilename = "knox.db"
-
 type HeaderReader interface {
 	io.ReadCloser
 }
@@ -199,13 +197,13 @@ type FileDatastore struct {
 	db       *gorm.DB
 }
 
-func NewFileDatastore(rootPath string) (FileDatastore, error) {
+func NewFileDatastore(dbFilePath string, rootPath string) (FileDatastore, error) {
 	// Must end in a slash.
 	if rootPath != "" && !strings.HasSuffix(rootPath, "/") {
 		rootPath += "/"
 	}
 	// TODO: Check if it exists first.
-	db, err := gorm.Open(sqlite.Open(rootPath+sqliteFilename), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dbFilePath), &gorm.Config{})
 	if err != nil {
 		return FileDatastore{}, err
 	}

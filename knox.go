@@ -13,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,6 +34,7 @@ var adminListRegex *regexp.Regexp
 var advertiseAddress = flag.String("advertise-address", "localhost:8080", "The address at which the service will be accessible.")
 var listenAddress = flag.String("listen-address", "0.0.0.0:8080", "The address at which the service will listen.")
 var datastoreRoot = flag.String("file-store-root", "", "The directory in which to place cached files.")
+var dbFile = flag.String("db-file", "", "The path to the sqlite db file.")
 
 var baseName = ""
 
@@ -491,7 +493,13 @@ func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 	// TODO: Figure out a way to write resource count and total size at
 	// beginning without first having to iterate through the whole thing.
 
-	pageNumStr := adminListRegex.FindAllStringSubmatch(r.URL.Path, -1)[0][1]
+	if !adminListRegex.MatchString(r.URL.Path) {
+		w.WriteHeader(400)
+		io.WriteString(w, fmt.Sprintf("Bad URI: %s", r.URL.Path))
+		return
+	}
+
+	pageNumStr := adminListRegex.FindStringSubmatch(r.URL.Path)[1]
 	pageNum, err := strconv.Atoi(pageNumStr)
 	if err != nil {
 		log.Printf("%v", adminListRegex)
@@ -529,11 +537,11 @@ func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 	noMoreResources := (resourceCount != maxResourcesPerPage)
 
 	if pageNum != 0 {
-		io.WriteString(w, fmt.Sprintf("<a href=\"admin/list/%d\">&lt; previous</a> &nbsp;&nbsp;", pageNum-1))
+		io.WriteString(w, fmt.Sprintf("<a href=\"/admin/list/%d\">&lt; previous</a> &nbsp;&nbsp;", pageNum-1))
 	}
 
 	if !noMoreResources {
-		io.WriteString(w, fmt.Sprintf("<a href=\"admin/list/%d\">next &gt;</a>", pageNum+1))
+		io.WriteString(w, fmt.Sprintf("<a href=\"/admin/list/%d\">next &gt;</a>", pageNum+1))
 	}
 	io.WriteString(w, adminListFooter)
 }
@@ -547,7 +555,11 @@ func handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 func main() {
 	flag.Parse()
 	var err error
-	ds, err = datastore.NewFileDatastore(*datastoreRoot)
+	actualDbFile := *dbFile
+	if actualDbFile == "" {
+		actualDbFile = path.Join(*datastoreRoot, "knox.db")
+	}
+	ds, err = datastore.NewFileDatastore(actualDbFile, *datastoreRoot)
 	if err != nil {
 		panic(err)
 	}
@@ -556,7 +568,7 @@ func main() {
 	http.HandleFunc("/admin/list/", handleAdminListRequest)
 	http.HandleFunc("/service-worker.js", handleServiceWorker)
 
-	adminListRegex, err = regexp.Compile("/admin/list/([0-9]+)")
+	adminListRegex, err = regexp.Compile("^/admin/list/([0-9]+)$")
 	if err != nil {
 		panic(fmt.Sprintf("Failed to compile /admin/list regex: %v", err))
 	}
