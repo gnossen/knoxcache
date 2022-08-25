@@ -3,7 +3,6 @@ package datastore
 import (
 	"bufio"
 	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -141,36 +140,6 @@ type FileResourceWriter struct {
 	headers *http.Header
 	id      uint
 	ds      *FileDatastore
-}
-
-func writeUint64(output uint64, w io.Writer) (int, error) {
-	uint64Buffer := make([]byte, 8)
-	binary.LittleEndian.PutUint64(uint64Buffer, output)
-	lengthWritten, err := io.Copy(w, bytes.NewReader(uint64Buffer))
-	if err != nil {
-		return int(lengthWritten), err
-	}
-	if lengthWritten != 8 {
-		return int(lengthWritten), fmt.Errorf("Expected to write %d bytes but wrote %d.", 8, lengthWritten)
-	}
-	return 8, nil
-}
-
-func writeLengthPrefixedString(s string, w io.Writer) (int, error) {
-	lenWritten := 0
-	n, err := writeUint64(uint64(len(s)), w)
-	lenWritten += n
-	if err != nil {
-		return lenWritten, fmt.Errorf("failed to write string prefix length of '%s': %v", s, err)
-	}
-
-	n, err = io.WriteString(w, s)
-	lenWritten += n
-	if err != nil {
-		return lenWritten, fmt.Errorf("failed to write string '%s': %v", s, err)
-	}
-
-	return lenWritten, nil
 }
 
 func headersAsString(headers *http.Header) (string, error) {
