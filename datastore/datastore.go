@@ -76,10 +76,10 @@ type resourceMetadata struct {
 	gorm.Model
 
 	// Hashed URL
-	HashedUrl string
+    HashedUrl string    `gorm:"unique"`
 
 	// Original URL.
-	Url string
+	Url string          `gorm:"unique"`
 
 	// Request Headers.
 	RequestHeaders string
