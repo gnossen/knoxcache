@@ -178,7 +178,10 @@ const adminListHeader = `
             <tr>
                 <th>Source Page</th>
                 <th>Cached Resource</th>
-                <th>Cache Date</th>
+                <th>Download Initiated</th>
+                <th>Download Duration</th>
+                <th>Original Size</th>
+                <th>Size on Disk</th>
             </tr>
 `
 
@@ -187,6 +190,26 @@ const adminListFooter = `
     </body>
 </html>
 `
+
+var dataSizeUnits []string = []string{
+	"B",
+	"KB",
+	"MB",
+	"GB",
+	"TB",
+	"PB",
+}
+
+func formatDataSize(bytes int) string {
+	currentUnitSize := float64(bytes)
+	for unitIndex := 0; unitIndex < len(dataSizeUnits)-1; unitIndex += 1 {
+		if currentUnitSize < 1024.0 {
+			return fmt.Sprintf("%.3f%s", currentUnitSize, dataSizeUnits[unitIndex])
+		}
+		currentUnitSize = currentUnitSize / 1024.0
+	}
+	return fmt.Sprintf("%.3f%s", currentUnitSize, dataSizeUnits[len(dataSizeUnits)-1])
+}
 
 // URL is assumed to be a normalized absolute URL.
 func translateAbsoluteUrlToCachedUrl(toTranslate string, protocol string, host string) (string, error) {
@@ -528,7 +551,12 @@ func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "<tr>")
 		io.WriteString(w, fmt.Sprintf("<td class=\"source-url\"><a href=\"%s\">%s</a></td>\n", url, shortenedUrl(url)))
 		io.WriteString(w, fmt.Sprintf("<td><a href=\"%s\">Cached</a></td>\n", translatedUrl))
-		io.WriteString(w, fmt.Sprintf("<td>%s</td>\n", metadata.CreationTime.Format(time.UnixDate)))
+		io.WriteString(w, fmt.Sprintf("<td>%s</td>\n", metadata.DownloadStarted.Format(time.UnixDate)))
+
+		io.WriteString(w, fmt.Sprintf("<td>%s</td>\n", metadata.DownloadDuration.String()))
+		io.WriteString(w, fmt.Sprintf("<td>%s</td>\n", formatDataSize(metadata.RawBytes)))
+		io.WriteString(w, fmt.Sprintf("<td>%s</td>\n", formatDataSize(metadata.BytesOnDisk)))
+
 		io.WriteString(w, "</tr>")
 		resourceCount += 1
 	}

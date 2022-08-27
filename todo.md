@@ -3,19 +3,23 @@
     - Open path x
     - Exists path x
     - List path x
-- Add pagination to list
-- gzip contents
+- Add pagination to list x
+- Consider race conditions between create operations x
+- gzip contents x
+- Benchmark sqlite on kadalu
+- Track resource count and total size on admin page
 - Support HEAD verb
+- Support storage of different HTTP status codes
+- dark mode
+- include headers in cache key
+    - This needs some more thought
 - Add functionality for caching if no version exists
+- mobile support for web UI
 - Support multiple versions of the same resource
     - Add metadata page per-resource
     - Add links to specific versions
     - Subprocess-based test suite
     - Support storage of diffs between different versions
-- Support size tracking
-- Support storage of different HTTP status codes
-- include headers in cache key
-    - This needs some more thought
 - Provide CLI for reading files in cache on fs?
 
 - implement podbay

@@ -41,7 +41,7 @@ spec:
               topologyKey: "kubernetes.io/hostname"
       containers:
       - name: knox
-        image: docker:5000/knox:10
+        image: docker:5000/knox:11
         args:
         - "/knox"
         - "--listen-address=0.0.0.0:80"

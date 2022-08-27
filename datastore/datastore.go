@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"compress/gzip"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -36,8 +38,11 @@ type ResourceWriter interface {
 }
 
 type ResourceMetadata struct {
-	Url          string
-	CreationTime time.Time
+	Url              string
+	DownloadStarted  time.Time
+	DownloadDuration time.Duration
+	RawBytes         int
+	BytesOnDisk      int
 }
 
 type ResourceIterator interface {
@@ -80,6 +85,16 @@ type resourceMetadata struct {
 
 	// Time download finished.
 	DownloadFinished time.Time
+
+	// Number of bytes in the body of the resource uncompressed.
+	RawBytes int
+
+	// Number of bytes in the body of the resource as stored on disk.
+	BytesOnDisk int
+}
+
+func resourceFilepath(rootPath string, resourceId uint) string {
+	return rootPath + strconv.FormatUint(uint64(resourceId), 10)
 }
 
 func splitHeaderPair(data []byte, atEOF bool) (advance int, token []byte, err error) {
@@ -107,22 +122,26 @@ func (e headerParseError) Error() string {
 }
 
 type FileResourceReader struct {
-	f           *os.File
+	g           io.ReadCloser // gzip Reader
 	resourceURL string
 	// TODO: Change name to response headers
 	headers *http.Header
 }
 
 func newFileResourceReader(f *os.File, resourceURL string, headers *http.Header) (FileResourceReader, error) {
-	return FileResourceReader{f, resourceURL, headers}, nil
+	g, err := gzip.NewReader(f)
+	if err != nil {
+		return FileResourceReader{}, err
+	}
+	return FileResourceReader{g, resourceURL, headers}, nil
 }
 
 func (rr FileResourceReader) Read(b []byte) (int, error) {
-	return rr.f.Read(b)
+	return rr.g.Read(b)
 }
 
 func (rr FileResourceReader) Close() error {
-	return rr.f.Close()
+	return rr.g.Close()
 }
 
 func (rr FileResourceReader) Headers() *http.Header {
@@ -134,10 +153,11 @@ func (rr FileResourceReader) ResourceURL() string {
 }
 
 type FileResourceWriter struct {
-	f       *os.File
-	headers *http.Header
-	id      uint
-	ds      *FileDatastore
+	g        io.WriteCloser // gzip writer
+	headers  *http.Header
+	id       uint
+	ds       *FileDatastore
+	rawBytes int
 }
 
 func headersAsString(headers *http.Header) (string, error) {
@@ -156,11 +176,17 @@ func headersAsString(headers *http.Header) (string, error) {
 }
 
 func (rw *FileResourceWriter) Write(b []byte) (int, error) {
-	bodyLen, err := rw.f.Write(b)
-	return bodyLen, err
+	rawBytes, err := rw.g.Write(b)
+	rw.rawBytes += rawBytes
+	return rawBytes, err
 }
 
 func (rw *FileResourceWriter) writeFinalMetadata() error {
+	fi, err := os.Stat(resourceFilepath(rw.ds.rootPath, rw.id))
+	if err != nil {
+		return err
+	}
+	bytesOnDisk := fi.Size()
 	responseHeaders, err := headersAsString(rw.headers)
 	if err != nil {
 		return err
@@ -169,6 +195,8 @@ func (rw *FileResourceWriter) writeFinalMetadata() error {
 	result := rw.ds.db.Model(&rm).Where("id = ?", rw.id).Updates(map[string]interface{}{
 		"response_headers":  responseHeaders,
 		"download_finished": time.Now(),
+		"raw_bytes":         rw.rawBytes,
+		"bytes_on_disk":     bytesOnDisk,
 	})
 	if result.Error != nil {
 		return result.Error
@@ -177,10 +205,13 @@ func (rw *FileResourceWriter) writeFinalMetadata() error {
 }
 
 func (rw *FileResourceWriter) Close() error {
+	if err := rw.g.Close(); err != nil {
+		return err
+	}
 	if err := rw.writeFinalMetadata(); err != nil {
 		return err
 	}
-	return rw.f.Close()
+	return nil
 }
 
 func (rw *FileResourceWriter) WriteHeaders(headers *http.Header) error {
@@ -189,7 +220,7 @@ func (rw *FileResourceWriter) WriteHeaders(headers *http.Header) error {
 }
 
 func newFileResourceWriter(f *os.File, id uint, ds *FileDatastore) (*FileResourceWriter, error) {
-	return &FileResourceWriter{f, nil, id, ds}, nil
+	return &FileResourceWriter{gzip.NewWriter(f), nil, id, ds, 0}, nil
 }
 
 type FileDatastore struct {
@@ -280,6 +311,8 @@ func (ds FileDatastore) createStubRecord(resourceUrl, hashedUrl string) (uint, e
 		"",
 		time.Now(),
 		time.UnixMicro(0),
+		0,
+		0,
 	}
 	result := ds.db.Create(&rm)
 	if result.Error != nil {
@@ -294,7 +327,7 @@ func (ds FileDatastore) Create(resourceURL string, hashedUrl string) (ResourceWr
 		return nil, err
 	}
 
-	f, err := os.Create(ds.rootPath + strconv.FormatUint(uint64(id), 10))
+	f, err := os.Create(resourceFilepath(ds.rootPath, id))
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +348,7 @@ type fileResourceIterator struct {
 func (fri *fileResourceIterator) Next() (ResourceMetadata, error) {
 	rm := (*fri.rms)[fri.index]
 	fri.index += 1
-	return ResourceMetadata{rm.Url, rm.DownloadStarted}, nil
+	return ResourceMetadata{rm.Url, rm.DownloadStarted, rm.DownloadFinished.Sub(rm.DownloadStarted), rm.RawBytes, rm.BytesOnDisk}, nil
 }
 
 func (fri *fileResourceIterator) HasNext() bool {
