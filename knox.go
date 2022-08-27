@@ -174,6 +174,22 @@ const adminListHeader = `
     <body>
 		<center>
         <div style="overflow-x: auto;">
+`
+
+const globalStatsTableHeader = `
+        <table>
+            <tr>
+                <th>Resource Count</th>
+                <th>Disk Usage</th>
+            </tr>
+`
+
+const globalStatsTableFooter = `
+        </table>
+        <br />
+`
+
+const resourceListTableHeader = `
         <table>
             <tr>
                 <th>Source Page</th>
@@ -200,15 +216,20 @@ var dataSizeUnits []string = []string{
 	"PB",
 }
 
+func formatUnit(magnitude float64, unit string) string {
+	magnitudeString := strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.2f", magnitude), "0"), ".")
+	return magnitudeString + unit
+}
+
 func formatDataSize(bytes int) string {
 	currentUnitSize := float64(bytes)
 	for unitIndex := 0; unitIndex < len(dataSizeUnits)-1; unitIndex += 1 {
 		if currentUnitSize < 1024.0 {
-			return fmt.Sprintf("%.3f%s", currentUnitSize, dataSizeUnits[unitIndex])
+			return formatUnit(currentUnitSize, dataSizeUnits[unitIndex])
 		}
 		currentUnitSize = currentUnitSize / 1024.0
 	}
-	return fmt.Sprintf("%.3f%s", currentUnitSize, dataSizeUnits[len(dataSizeUnits)-1])
+	return formatUnit(currentUnitSize, dataSizeUnits[len(dataSizeUnits)-1])
 }
 
 // URL is assumed to be a normalized absolute URL.
@@ -530,11 +551,28 @@ func handleAdminListRequest(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, fmt.Sprintf("Internal error: %v", err))
 		return
 	}
+	stats, err := ds.Stats()
+	if err != nil {
+		msg := fmt.Sprintf("Failed to get global stats: %v\n", err)
+		log.Printf(msg)
+		w.WriteHeader(500)
+		io.WriteString(w, msg)
+	}
 	ri, err := ds.List(pageNum*maxResourcesPerPage, maxResourcesPerPage)
 	if err != nil {
-		log.Printf("Failed to list resources: %v\n", err)
+		msg := fmt.Sprintf("Failed to list resources: %v\n", err)
+		log.Printf(msg)
+		w.WriteHeader(500)
+		io.WriteString(w, msg)
 	}
 	io.WriteString(w, adminListHeader)
+	io.WriteString(w, globalStatsTableHeader)
+	io.WriteString(w, "<tr>")
+	io.WriteString(w, fmt.Sprintf("<td>%d</td>", stats.RecordCount))
+	io.WriteString(w, fmt.Sprintf("<td>%s</td>", formatDataSize(stats.DiskConsumptionBytes)))
+	io.WriteString(w, "</tr>")
+	io.WriteString(w, globalStatsTableFooter)
+	io.WriteString(w, resourceListTableHeader)
 	resourceCount := 0
 	for ri.HasNext() {
 		metadata, err := ri.Next()

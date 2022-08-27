@@ -50,6 +50,11 @@ type ResourceIterator interface {
 	HasNext() bool
 }
 
+type ResourceStats struct {
+	RecordCount          int64
+	DiskConsumptionBytes int
+}
+
 type Datastore interface {
 	Exists(hashedUrl string) (bool, error)
 
@@ -60,6 +65,8 @@ type Datastore interface {
 	Create(resourceURL string, hashedUrl string) (ResourceWriter, error)
 
 	List(offset, count int) (ResourceIterator, error)
+
+	Stats() (ResourceStats, error)
 	// TODO: Might need to add Close method here as well once we add a networked
 	// db.
 
@@ -362,4 +369,14 @@ func (ds FileDatastore) List(offset, count int) (ResourceIterator, error) {
 		return nil, result.Error
 	}
 	return &fileResourceIterator{ds.rootPath, &rms, 0}, nil
+}
+
+func (ds FileDatastore) Stats() (ResourceStats, error) {
+	var resourceCount int64 = 0
+	ds.db.Model(&resourceMetadata{}).Count(&resourceCount)
+
+	var byteSum int = 0
+	ds.db.Model(&resourceMetadata{}).Select("sum(bytes_on_disk)").Scan(&byteSum)
+
+	return ResourceStats{resourceCount, byteSum}, nil
 }
