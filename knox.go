@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -448,7 +449,7 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	encodedUrl := r.URL.Path[len(prefix):]
 
-	exists, err := ds.Exists(encodedUrl)
+	status, err := ds.Status(encodedUrl)
 
 	if err != nil {
 		msg := fmt.Sprintf("Internal error: %v\n", err)
@@ -457,7 +458,13 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !exists {
+	if status == datastore.ResourceDownloading {
+		w.WriteHeader(409)
+		io.WriteString(w, "Resource downloading")
+		return
+	}
+
+	if status == datastore.ResourceNotCached {
 		decodedUrl, err := encoder.Decode(encodedUrl)
 		if err != nil {
 			msg := fmt.Sprintf("Could not interpret requested url '%s'", encodedUrl)
@@ -640,6 +647,11 @@ func main() {
 	}
 
 	baseName = *advertiseAddress
-	log.Printf("Listening on %s", *listenAddress)
-	log.Fatal(http.ListenAndServe(*listenAddress, nil))
+	srv := &http.Server{Addr: *listenAddress, Handler: nil}
+	ln, err := net.Listen("tcp", *listenAddress)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to listen on %s: %v", *listenAddress, err))
+	}
+	log.Printf("Listening on %s", ln.Addr().String())
+	log.Fatal(srv.Serve(ln))
 }

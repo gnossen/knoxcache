@@ -55,8 +55,16 @@ type ResourceStats struct {
 	DiskConsumptionBytes int
 }
 
+type ResourceStatus int
+
+const (
+	ResourceNotCached ResourceStatus = iota
+	ResourceDownloading
+	ResourceCached
+)
+
 type Datastore interface {
-	Exists(hashedUrl string) (bool, error)
+	Status(hashedUrl string) (ResourceStatus, error)
 
 	// Resource must exist when this method is called.
 	Open(hashedUrl string) (ResourceReader, error)
@@ -76,10 +84,10 @@ type resourceMetadata struct {
 	gorm.Model
 
 	// Hashed URL
-    HashedUrl string    `gorm:"unique"`
+	HashedUrl string `gorm:"unique"`
 
 	// Original URL.
-	Url string          `gorm:"unique"`
+	Url string `gorm:"unique"`
 
 	// Request Headers.
 	RequestHeaders string
@@ -98,6 +106,9 @@ type resourceMetadata struct {
 
 	// Number of bytes in the body of the resource as stored on disk.
 	BytesOnDisk int
+
+	// Whether the download has finished yet.
+	DownloadComplete bool
 }
 
 func resourceFilepath(rootPath string, resourceId uint) string {
@@ -204,6 +215,7 @@ func (rw *FileResourceWriter) writeFinalMetadata() error {
 		"download_finished": time.Now(),
 		"raw_bytes":         rw.rawBytes,
 		"bytes_on_disk":     bytesOnDisk,
+		"download_complete": true,
 	})
 	if result.Error != nil {
 		return result.Error
@@ -251,15 +263,17 @@ func NewFileDatastore(dbFilePath string, rootPath string) (FileDatastore, error)
 	return FileDatastore{rootPath, db}, nil
 }
 
-func (ds FileDatastore) Exists(hashedUrl string) (bool, error) {
+func (ds FileDatastore) Status(hashedUrl string) (ResourceStatus, error) {
 	rm := resourceMetadata{}
 	result := ds.db.First(&rm, "hashed_url = ?", hashedUrl)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return false, nil
+		return ResourceNotCached, nil
 	} else if result.Error != nil {
-		return false, result.Error
+		return ResourceNotCached, result.Error
+	} else if !rm.DownloadComplete {
+		return ResourceDownloading, nil
 	} else {
-		return true, nil
+		return ResourceCached, nil
 	}
 }
 
@@ -320,6 +334,7 @@ func (ds FileDatastore) createStubRecord(resourceUrl, hashedUrl string) (uint, e
 		time.UnixMicro(0),
 		0,
 		0,
+		false,
 	}
 	result := ds.db.Create(&rm)
 	if result.Error != nil {

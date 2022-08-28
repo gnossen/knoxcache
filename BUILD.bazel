@@ -46,3 +46,15 @@ go_binary(
         ":encoder",
     ]
 )
+
+go_test(
+    name = "e2e_test",
+    srcs = ["e2e_test.go"],
+    args = [
+        "--binary",
+        "$(location :knox)",
+    ],
+    data = [
+        ":knox",
+    ],
+)

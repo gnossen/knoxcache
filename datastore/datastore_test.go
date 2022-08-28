@@ -143,10 +143,16 @@ func TestInvolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create FileDatastore: %v", err)
 	}
-	hr := randomHttpResource(r)
-	createHttpResource(t, &ds, hr)
-	hr2 := readHttpResource(t, ds, hr.hashedUrl)
-	if !reflect.DeepEqual(hr, hr2) {
-		t.Fatalf("Expected:\n%v\ngot:\n%v", hr, hr2)
+	for i := 0; i < 128; i += 1 {
+		hr := randomHttpResource(r)
+		createHttpResource(t, &ds, hr)
+		hr2 := readHttpResource(t, ds, hr.hashedUrl)
+		if !reflect.DeepEqual(hr, hr2) {
+			t.Fatalf("Expected:\n%v\ngot:\n%v", hr, hr2)
+		}
 	}
+}
+
+func TestConcurrentCreations(t *testing.T) {
+	// TODO: Maybe.
 }
