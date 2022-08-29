@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -122,7 +123,7 @@ func NewKnoxProcess(path, datastoreRoot, address, processId string) (KnoxProcess
 	return kp, nil
 }
 
-func (kp KnoxProcess) Stop() error {
+func (kp KnoxProcess) Close() error {
 	if err := kp.proc.Signal(syscall.SIGINT); err != nil {
 		return err
 	}
@@ -191,6 +192,16 @@ func NewTestHttpServer(hc HttpHandlerConfig) (srv *http.Server, th *TestHandler,
 	return srv, th, ln.Addr().String(), nil
 }
 
+func getHttpResponseBody(res *http.Response, t *testing.T) string {
+	buf := new(strings.Builder)
+	_, err := io.Copy(buf, res.Body)
+	if err != nil {
+		t.Fatalf("Failed to copy content from HTTP response: %v", err)
+	}
+
+	return buf.String()
+}
+
 func TestCache(t *testing.T) {
 	path, err := filepath.Abs(*binary)
 	if err != nil {
@@ -210,7 +221,7 @@ func TestCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start process: %v\n", err)
 	}
-	defer kp.Stop()
+	defer kp.Close()
 	defer kp.DumpStreams()
 
 	body := "testing123"
@@ -223,7 +234,6 @@ func TestCache(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 	defer testServer.Close()
-	fmt.Printf("Test server listening at %s\n", testServerAddress)
 
 	encoder := enc.NewDefaultEncoder()
 	rawUrl := fmt.Sprintf("http://%s/test1", testServerAddress)
@@ -243,14 +253,9 @@ func TestCache(t *testing.T) {
 			t.Fatalf("Expected status code 200 but found %d", res.StatusCode)
 		}
 
-		buf := new(strings.Builder)
-		_, err = io.Copy(buf, res.Body)
-		if err != nil {
-			t.Fatalf("Failed to copy content from HTTP response: %v", err)
-		}
-
-		if buf.String() != body {
-			t.Fatalf("Expected response to have content \"%s\" but instead found \"%s\".", body, buf.String())
+		gotBody := getHttpResponseBody(res, t)
+		if gotBody != body {
+			t.Fatalf("Wrong content. got = \"%s\", want = \"%s\".", gotBody, body)
 		}
 
 		expectedCounts := map[string]int{
@@ -271,3 +276,102 @@ func TestCache(t *testing.T) {
 
 	evaluateResponse(res)
 }
+
+func TestConcurrentCreationSingleKnox(t *testing.T) {
+	path, err := filepath.Abs(*binary)
+	if err != nil {
+		t.Fatalf("Failed to locate binary: %v", err)
+	}
+
+	datastoreRoot, err := ioutil.TempDir("", "knox-datastore-test")
+	fmt.Printf("Using datastore root %s\n", datastoreRoot)
+	if err != nil {
+		t.Fatalf("Failed to create test temp dir: %v", err)
+	}
+	if _, err := os.Stat(*binary); os.IsNotExist(err) {
+		t.Fatalf("Missing binary %v", *binary)
+	}
+
+	kp, err := NewKnoxProcess(path, datastoreRoot, "localhost:0", "1")
+	if err != nil {
+		t.Fatalf("Failed to start process: %v\n", err)
+	}
+	defer kp.Close()
+	defer kp.DumpStreams()
+
+	body := "testing123"
+	testServer, th, testServerAddress, err := NewTestHttpServer(
+		HttpHandlerConfig{
+			"/test1": cannedContent(body),
+		},
+	)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	defer testServer.Close()
+
+	encoder := enc.NewDefaultEncoder()
+	rawUrl := fmt.Sprintf("http://%s/test1", testServerAddress)
+	requestUrlHash, err := encoder.Encode(rawUrl)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	requestUrl := fmt.Sprintf("http://localhost:%s/c/%s", kp.Port(), requestUrlHash)
+
+	type Result struct {
+		Res *http.Response
+		Err error
+	}
+
+	const clientCount = 32
+	resultChan := make(chan Result)
+	var wg sync.WaitGroup
+	wg.Add(clientCount)
+
+	runClient := func() {
+		wg.Done()
+		wg.Wait()
+		res, err := http.Get(requestUrl)
+		resultChan <- Result{res, err}
+	}
+
+	for i := 0; i < clientCount; i += 1 {
+		go runClient()
+	}
+
+	var results []Result
+	for i := 0; i < clientCount; i += 1 {
+		result := <-resultChan
+		results = append(results, result)
+	}
+
+	for _, res := range results {
+		if res.Err != nil {
+			t.Errorf("Response not completed successfullly: %v", res.Err)
+			continue
+		}
+		if res.Res == nil {
+			t.Errorf("Received nil response.")
+			continue
+		}
+		if res.Res.StatusCode != 200 {
+			t.Errorf("Wrong response code. got = %d, want = %d.", res.Res.StatusCode, 200)
+		}
+
+		gotBody := getHttpResponseBody(res.Res, t)
+		if gotBody != body {
+			t.Errorf("Wrong http content. got = \"%s\", want = \"%s\"", gotBody, body)
+		}
+	}
+
+	expectedCounts := map[string]int{
+		"/test1": 1,
+	}
+
+	if !reflect.DeepEqual(th.UriCounts, expectedCounts) {
+		t.Errorf("URI request counts are not right. got = %v\n want = %v\n", th.UriCounts, expectedCounts)
+	}
+}
+
+// TODO: TestConcurrentCreationMultipleKnox
