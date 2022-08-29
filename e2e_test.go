@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"syscall"
@@ -156,20 +157,38 @@ func cannedContent(body string) HttpHandler {
 	}
 }
 
-func NewTestHttpServer(hc HttpHandlerConfig) (srv *http.Server, address string, err error) {
-	mux := http.NewServeMux()
-	for uri, handler := range hc {
-		mux.HandleFunc(uri, handler)
+type TestHandler struct {
+	UriCounts map[string]int
+	config    HttpHandlerConfig
+}
+
+func (th *TestHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	count, ok := th.UriCounts[req.URL.Path]
+	if !ok {
+		count = 0
 	}
+	th.UriCounts[req.URL.Path] = count + 1
+	for uri, handler := range th.config {
+		if strings.HasPrefix(req.URL.Path, uri) {
+			handler(w, req)
+			return
+		}
+	}
+	w.WriteHeader(404)
+	io.WriteString(w, fmt.Sprintf("URI %s is invalid.", req.URL.Path))
+}
+
+func NewTestHttpServer(hc HttpHandlerConfig) (srv *http.Server, th *TestHandler, address string, err error) {
+	th = &TestHandler{map[string]int{}, hc}
 
 	listenAddress := "localhost:0"
-	srv = &http.Server{Addr: listenAddress, Handler: mux}
+	srv = &http.Server{Addr: listenAddress, Handler: th}
 	ln, err := net.Listen("tcp", listenAddress)
 	if err != nil {
-		return nil, "", fmt.Errorf("Failed to listen on %s: %v", listenAddress, err)
+		return nil, nil, "", fmt.Errorf("Failed to listen on %s: %v", listenAddress, err)
 	}
 	go srv.Serve(ln)
-	return srv, ln.Addr().String(), nil
+	return srv, th, ln.Addr().String(), nil
 }
 
 func TestCache(t *testing.T) {
@@ -195,7 +214,7 @@ func TestCache(t *testing.T) {
 	defer kp.DumpStreams()
 
 	body := "testing123"
-	testServer, testServerAddress, err := NewTestHttpServer(
+	testServer, th, testServerAddress, err := NewTestHttpServer(
 		HttpHandlerConfig{
 			"/test1": cannedContent(body),
 		},
@@ -213,28 +232,42 @@ func TestCache(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 
-	// TODO: Also count how many times the test server gets hit.
-
 	requestUrl := fmt.Sprintf("http://localhost:%s/c/%s", kp.Port(), requestUrlHash)
 	res, err := http.Get(requestUrl)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
 
-	if res.StatusCode != 200 {
-		t.Fatalf("Expected status code 200 but found %d", res.StatusCode)
+	evaluateResponse := func(res *http.Response) {
+		if res.StatusCode != 200 {
+			t.Fatalf("Expected status code 200 but found %d", res.StatusCode)
+		}
+
+		buf := new(strings.Builder)
+		_, err = io.Copy(buf, res.Body)
+		if err != nil {
+			t.Fatalf("Failed to copy content from HTTP response: %v", err)
+		}
+
+		if buf.String() != body {
+			t.Fatalf("Expected response to have content \"%s\" but instead found \"%s\".", body, buf.String())
+		}
+
+		expectedCounts := map[string]int{
+			"/test1": 1,
+		}
+
+		if !reflect.DeepEqual(th.UriCounts, expectedCounts) {
+			t.Fatalf("URI request counts are not right. got = %v\n want = %v\n", th.UriCounts, expectedCounts)
+		}
 	}
 
-	buf := new(strings.Builder)
-	_, err = io.Copy(buf, res.Body)
+	evaluateResponse(res)
+
+	res, err = http.Get(requestUrl)
 	if err != nil {
-		t.Fatalf("Failed to copy content from HTTP response: %v", err)
+		t.Fatalf("Second request failed: %v", err)
 	}
 
-	if buf.String() != body {
-		t.Fatalf("Expected response to have content \"%s\" but instead found \"%s\".", body, buf.String())
-	}
-
-	fmt.Printf("Response: %v\n", res)
-
+	evaluateResponse(res)
 }
