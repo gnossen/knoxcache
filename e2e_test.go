@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	enc "github.com/gnossen/knoxcache/encoder"
 )
 
 var binary = flag.String("binary", "", "The knox binary")
@@ -140,6 +145,33 @@ func (kp KnoxProcess) Port() string {
 	return kp.port
 }
 
+type HttpHandler func(http.ResponseWriter, *http.Request)
+
+type HttpHandlerConfig map[string]HttpHandler
+
+func cannedContent(body string) HttpHandler {
+	return func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, body)
+		w.WriteHeader(200)
+	}
+}
+
+func NewTestHttpServer(hc HttpHandlerConfig) (srv *http.Server, address string, err error) {
+	mux := http.NewServeMux()
+	for uri, handler := range hc {
+		mux.HandleFunc(uri, handler)
+	}
+
+	listenAddress := "localhost:0"
+	srv = &http.Server{Addr: listenAddress, Handler: mux}
+	ln, err := net.Listen("tcp", listenAddress)
+	if err != nil {
+		return nil, "", fmt.Errorf("Failed to listen on %s: %v", listenAddress, err)
+	}
+	go srv.Serve(ln)
+	return srv, ln.Addr().String(), nil
+}
+
 func TestCache(t *testing.T) {
 	path, err := filepath.Abs(*binary)
 	if err != nil {
@@ -159,7 +191,50 @@ func TestCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start process: %v\n", err)
 	}
-	time.Sleep(2 * time.Second)
-	kp.Stop()
-	kp.DumpStreams()
+	defer kp.Stop()
+	defer kp.DumpStreams()
+
+	body := "testing123"
+	testServer, testServerAddress, err := NewTestHttpServer(
+		HttpHandlerConfig{
+			"/test1": cannedContent(body),
+		},
+	)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	defer testServer.Close()
+	fmt.Printf("Test server listening at %s\n", testServerAddress)
+
+	encoder := enc.NewDefaultEncoder()
+	rawUrl := fmt.Sprintf("http://%s/test1", testServerAddress)
+	requestUrlHash, err := encoder.Encode(rawUrl)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	// TODO: Also count how many times the test server gets hit.
+
+	requestUrl := fmt.Sprintf("http://localhost:%s/c/%s", kp.Port(), requestUrlHash)
+	res, err := http.Get(requestUrl)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	if res.StatusCode != 200 {
+		t.Fatalf("Expected status code 200 but found %d", res.StatusCode)
+	}
+
+	buf := new(strings.Builder)
+	_, err = io.Copy(buf, res.Body)
+	if err != nil {
+		t.Fatalf("Failed to copy content from HTTP response: %v", err)
+	}
+
+	if buf.String() != body {
+		t.Fatalf("Expected response to have content \"%s\" but instead found \"%s\".", body, buf.String())
+	}
+
+	fmt.Printf("Response: %v\n", res)
+
 }
