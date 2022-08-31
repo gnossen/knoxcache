@@ -17,6 +17,7 @@ go_library(
    srcs = ["datastore/datastore.go"],
    deps = [
      "@com_github_go_gorm_gorm//:gorm",
+     "@com_github_go_gorm_gorm//clause",
      "@io_gorm_driver_sqlite//:sqlite",
    ],
    importpath = "github.com/gnossen/knoxcache/datastore",
@@ -29,6 +30,7 @@ go_test(
         "datastore/datastore.go"
    ],
    deps = [
+     "@com_github_mattn_go_sqlite3//:sqlite3",
      "@com_github_go_gorm_gorm//:gorm",
      "@io_gorm_driver_sqlite//:sqlite",
    ],

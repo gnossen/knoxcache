@@ -23,3 +23,4 @@
 - Provide CLI for reading files in cache on fs?
 
 - implement podbay
+- implement Latin study tool

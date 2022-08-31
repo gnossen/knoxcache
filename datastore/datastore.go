@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type HeaderReader interface {
@@ -67,10 +68,12 @@ type Datastore interface {
 	Status(hashedUrl string) (ResourceStatus, error)
 
 	// Resource must exist when this method is called.
+	// If the resource is in the process of downloading, blocks until it is finished downloading.
 	Open(hashedUrl string) (ResourceReader, error)
 
-	// Resource must not exist when this method is called.
-	Create(resourceURL string, hashedUrl string) (ResourceWriter, error)
+	// Creates resource if it does not exist.
+	// Returns (nil, nil) if the resource already exists.
+	TryCreate(resourceURL string, hashedUrl string) (ResourceWriter, bool, error)
 
 	List(offset, count int) (ResourceIterator, error)
 
@@ -305,11 +308,26 @@ func readHeaders(hs string) (*http.Header, error) {
 	return &headers, nil
 }
 
+func (ds FileDatastore) awaitCompletedResource(hashedUrl string) (resourceMetadata, error) {
+	for {
+		rm := resourceMetadata{}
+		result := ds.db.First(&rm, "hashed_url = ?", hashedUrl)
+		if result.Error != nil {
+			return rm, result.Error
+		}
+		if !rm.DownloadComplete {
+			// TODO: There has _got_ to be a better solution than polling.
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		return rm, nil
+	}
+}
+
 func (ds FileDatastore) Open(hashedUrl string) (ResourceReader, error) {
-	rm := resourceMetadata{}
-	result := ds.db.First(&rm, "hashed_url = ?", hashedUrl)
-	if result.Error != nil {
-		return nil, result.Error
+	rm, err := ds.awaitCompletedResource(hashedUrl)
+	if err != nil {
+		return nil, err
 	}
 	f, err := os.Open(ds.rootPath + strconv.FormatUint(uint64(rm.ID), 10))
 	if err != nil {
@@ -322,7 +340,7 @@ func (ds FileDatastore) Open(hashedUrl string) (ResourceReader, error) {
 	return newFileResourceReader(f, rm.Url, headers)
 }
 
-func (ds FileDatastore) createStubRecord(resourceUrl, hashedUrl string) (uint, error) {
+func (ds FileDatastore) tryCreateStubRecord(resourceUrl, hashedUrl string) (bool, uint, error) {
 	// TODO: Actually collect requestHeaders
 	rm := &resourceMetadata{
 		gorm.Model{},
@@ -336,17 +354,25 @@ func (ds FileDatastore) createStubRecord(resourceUrl, hashedUrl string) (uint, e
 		0,
 		false,
 	}
-	result := ds.db.Create(&rm)
+	result := ds.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rm)
+
 	if result.Error != nil {
-		return 0, result.Error
+		return false, 0, result.Error
 	}
-	return rm.ID, nil
+	if result.RowsAffected == 0 {
+		return false, 0, nil
+	}
+	return true, rm.ID, nil
 }
 
-func (ds FileDatastore) Create(resourceURL string, hashedUrl string) (ResourceWriter, error) {
-	id, err := ds.createStubRecord(resourceURL, hashedUrl)
+func (ds FileDatastore) TryCreate(resourceURL string, hashedUrl string) (ResourceWriter, error) {
+	created, id, err := ds.tryCreateStubRecord(resourceURL, hashedUrl)
 	if err != nil {
 		return nil, err
+	}
+
+	if !created {
+		return nil, nil
 	}
 
 	f, err := os.Create(resourceFilepath(ds.rootPath, id))

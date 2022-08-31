@@ -336,15 +336,15 @@ func transformHtml(resourceUrl *url.URL, in io.Reader, out io.Writer, protocol s
 	return nil
 }
 
-func cachePage(srcUrl string, ds datastore.Datastore, userAgent string, protocol string, host string) (string, error) {
+func cachePage(srcUrl string, resourceWriter datastore.ResourceWriter, userAgent string) error {
 	encodedUrl, err := encoder.Encode(srcUrl)
 	if err != nil {
-		return "", err
+		return err
 	}
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", srcUrl, nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if userAgent != "" {
 		req.Header.Add("User-Agent", userAgent)
@@ -352,14 +352,13 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string, protocol
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Failed to get url %s: %v\n", srcUrl, err)
-		return "", err
+		return err
 	}
 
 	log.Printf("Caching %s as %s\n", srcUrl, encodedUrl)
-	resourceWriter, err := ds.Create(srcUrl, encodedUrl)
 	if err != nil {
 		log.Println("Failed to open page %s for writing: %v", encodedUrl, err)
-		return "", err
+		return err
 	}
 	defer resourceWriter.Close()
 
@@ -372,14 +371,10 @@ func cachePage(srcUrl string, ds datastore.Datastore, userAgent string, protocol
 	resourceWriter.WriteHeaders(&resp.Header)
 
 	if _, err = io.Copy(resourceWriter, resp.Body); err != nil {
-		return "", err
+		return err
 	}
 
-	translated, err := translateAbsoluteUrlToCachedUrl(srcUrl, protocol, host)
-	if err != nil {
-		return "", err
-	}
-	return translated, nil
+	return nil
 }
 
 func serveExistingPage(encodedUrl string, w http.ResponseWriter, protocol string, host string) {
@@ -439,6 +434,24 @@ func getHost(r *http.Request) string {
 	return baseName
 }
 
+// Caches requested resource if it does not exist, otherwise returns immediately.
+func maybeCachePage(encodedUrl, rawUrl string, userAgent string) error {
+	resourceWriter, err := ds.TryCreate(rawUrl, encodedUrl)
+
+	if err != nil {
+		return err
+	}
+
+	if resourceWriter != nil {
+		err = cachePage(rawUrl, resourceWriter, userAgent)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func handlePageRequest(w http.ResponseWriter, r *http.Request) {
 	// Strip the slash
 	prefix := "/c/"
@@ -448,38 +461,19 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	encodedUrl := r.URL.Path[len(prefix):]
-
-	status, err := ds.Status(encodedUrl)
-
+	decodedUrl, err := encoder.Decode(encodedUrl)
 	if err != nil {
-		msg := fmt.Sprintf("Internal error: %v\n", err)
-		w.WriteHeader(500)
+		msg := fmt.Sprintf("Could not interpret requested url '%s'", encodedUrl)
+		w.WriteHeader(400)
 		io.WriteString(w, msg)
 		return
 	}
 
-	if status == datastore.ResourceDownloading {
-		w.WriteHeader(409)
-		io.WriteString(w, "Resource downloading")
+	if err := maybeCachePage(encodedUrl, decodedUrl, r.Header.Get("User-Agent")); err != nil {
+		msg := fmt.Sprintf("Internal error: %v\n", err)
+		w.WriteHeader(500)
+		io.WriteString(w, msg)
 		return
-	}
-
-	if status == datastore.ResourceNotCached {
-		decodedUrl, err := encoder.Decode(encodedUrl)
-		if err != nil {
-			msg := fmt.Sprintf("Could not interpret requested url '%s'", encodedUrl)
-			w.WriteHeader(400)
-			io.WriteString(w, msg)
-			return
-		}
-		_, err = cachePage(decodedUrl, ds, r.Header.Get("User-Agent"), getProtocol(r), getHost(r))
-		if err != nil {
-			// TODO: Figure out how to dedupe this.
-			w.WriteHeader(500)
-			msg := fmt.Sprintf("Failed to cache page: %v", err)
-			io.WriteString(w, msg)
-			return
-		}
 	}
 
 	serveExistingPage(encodedUrl, w, getProtocol(r), getHost(r))
@@ -512,10 +506,23 @@ func handleCreatePageRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		} else {
 			requestedUrl := requestedUrls[0]
-			cachedUrl, err := cachePage(requestedUrl, ds, r.Header.Get("User-Agent"), getProtocol(r), getHost(r))
+			encodedUrl, err := encoder.Encode(requestedUrl)
 			if err != nil {
+				msg := fmt.Sprintf("Could not interpret requested url '%s'", encodedUrl)
+				w.WriteHeader(400)
+				io.WriteString(w, msg)
+				return
+			}
+			if err := maybeCachePage(encodedUrl, requestedUrl, r.Header.Get("User-Agent")); err != nil {
 				w.WriteHeader(500)
 				msg := fmt.Sprintf("Failed to cache page: %v", err)
+				io.WriteString(w, msg)
+				return
+			}
+			cachedUrl, err := translateAbsoluteUrlToCachedUrl(requestedUrl, getProtocol(r), getHost(r))
+			if err != nil {
+				w.WriteHeader(500)
+				msg := fmt.Sprintf("Failed to get cached URL: %v", err)
 				io.WriteString(w, msg)
 				return
 			}

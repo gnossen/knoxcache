@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -60,12 +61,15 @@ func getStream(f *os.File) (string, error) {
 }
 
 func dumpStream(f *os.File, name string) error {
-	fmt.Printf("==== %s ====\n", name)
+	banner := fmt.Sprintf("==== %s ====", name)
+	fmt.Printf("%s\n", banner)
 	stream, err := getStream(f)
 	if err != nil {
 		return fmt.Errorf("Failed to read %s: %v", name, err)
 	}
 	fmt.Printf("%s", stream)
+	tailer := strings.Repeat("=", len(banner))
+	fmt.Printf("%s\n", tailer)
 	return nil
 }
 
@@ -185,7 +189,6 @@ type HttpHandlerConfig map[string]HttpHandler
 func cannedContent(body string) HttpHandler {
 	return func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, body)
-		w.WriteHeader(200)
 	}
 }
 
@@ -383,11 +386,11 @@ func TestConcurrentCreationMultipleKnox(t *testing.T) {
 	path := getKnoxBinary(t)
 	datastoreRoot := makeDatastoreRoot(t)
 
-	const knoxInstanceCount = 3
+	const knoxInstanceCount = 4
 	var knoxes []KnoxProcess
 
 	for i := 0; i < knoxInstanceCount; i += 1 {
-		kp, err := NewKnoxProcess(path, datastoreRoot, "localhost:0", "1")
+		kp, err := NewKnoxProcess(path, datastoreRoot, "localhost:0", strconv.FormatInt(int64(i), 10))
 		if err != nil {
 			t.Fatalf("Failed to start process: %v\n", err)
 		}
@@ -412,7 +415,7 @@ func TestConcurrentCreationMultipleKnox(t *testing.T) {
 		Err error
 	}
 
-	const perKnoxClientCount = 3
+	const perKnoxClientCount = 16
 
 	resultChan := make(chan Result)
 	var wg sync.WaitGroup

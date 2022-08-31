@@ -11,6 +11,8 @@ import (
 	"path"
 	"reflect"
 	"testing"
+
+	"reflect"
 )
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$-_.+!*',():;@&=/#[]")
