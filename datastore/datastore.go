@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -73,7 +75,7 @@ type Datastore interface {
 
 	// Creates resource if it does not exist.
 	// Returns (nil, nil) if the resource already exists.
-	TryCreate(resourceURL string, hashedUrl string) (ResourceWriter, bool, error)
+	TryCreate(resourceURL string, hashedUrl string) (ResourceWriter, error)
 
 	List(offset, count int) (ResourceIterator, error)
 
@@ -308,20 +310,54 @@ func readHeaders(hs string) (*http.Header, error) {
 	return &headers, nil
 }
 
-func (ds FileDatastore) awaitCompletedResource(hashedUrl string) (resourceMetadata, error) {
+type successFunc func() error
+
+func withExponentialBackoff(f successFunc, base time.Duration, growthFactor float64, maxDuration time.Duration, maxTime time.Duration) error {
+	tries := 0
+	currentDelay := base
+	totalTime := 0 * time.Second
 	for {
-		rm := resourceMetadata{}
+		err := f()
+		if err == nil {
+			return nil
+		}
+		tries += 1
+		if totalTime >= maxTime {
+			return fmt.Errorf("Exceeded maximum timeout of %v: %v", maxTime, err)
+		}
+		log.Printf("%v\n  Attempt %d failed. Trying again in %v.", err, tries+1, currentDelay)
+		time.Sleep(currentDelay)
+		totalTime += currentDelay
+		currentDelay = time.Duration(int64(math.Round(growthFactor * float64(currentDelay.Nanoseconds()))))
+		if currentDelay >= maxDuration {
+			currentDelay = maxDuration
+		}
+	}
+
+	return fmt.Errorf("Unreachable code.")
+}
+
+func (ds FileDatastore) awaitCompletedResource(hashedUrl string) (resourceMetadata, error) {
+	rm := resourceMetadata{}
+	getResource := func() error {
 		result := ds.db.First(&rm, "hashed_url = ?", hashedUrl)
 		if result.Error != nil {
-			return rm, result.Error
+			return result.Error
 		}
 		if !rm.DownloadComplete {
-			// TODO: There has _got_ to be a better solution than polling.
-			time.Sleep(100 * time.Millisecond)
-			continue
+			return fmt.Errorf("download incomplete")
 		}
-		return rm, nil
+		return nil
 	}
+	err := withExponentialBackoff(getResource,
+		100*time.Millisecond,
+		1.5,
+		10*time.Second,
+		30*time.Minute)
+	if err != nil {
+		return rm, err
+	}
+	return rm, nil
 }
 
 func (ds FileDatastore) Open(hashedUrl string) (ResourceReader, error) {

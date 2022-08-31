@@ -11,8 +11,6 @@ import (
 	"path"
 	"reflect"
 	"testing"
-
-	"reflect"
 )
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$-_.+!*',():;@&=/#[]")
@@ -91,11 +89,14 @@ func randomHttpResource(r *rand.Rand) HttpResource {
 }
 
 func createHttpResource(t *testing.T, ds Datastore, hr HttpResource) {
-	rw, err := ds.Create(hr.resourceUrl, hr.hashedUrl)
-	defer rw.Close()
+	rw, err := ds.TryCreate(hr.resourceUrl, hr.hashedUrl)
 	if err != nil {
 		t.Fatalf("Failed to create resource %v: %v", hr, err)
 	}
+	if rw == nil {
+		t.Fatalf("Resource already existed.")
+	}
+	defer rw.Close()
 	if err = rw.WriteHeaders(&hr.headers); err != nil {
 		t.Fatalf("Failed to write headers for resource %v: %v", hr, err)
 	}
@@ -153,8 +154,4 @@ func TestInvolution(t *testing.T) {
 			t.Fatalf("Expected:\n%v\ngot:\n%v", hr, hr2)
 		}
 	}
-}
-
-func TestConcurrentCreations(t *testing.T) {
-	// TODO: Maybe.
 }

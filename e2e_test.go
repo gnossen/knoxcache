@@ -469,3 +469,6 @@ func TestConcurrentCreationMultipleKnox(t *testing.T) {
 		t.Errorf("URI request counts are not right. got = %v\n want = %v\n", th.UriCounts, expectedCounts)
 	}
 }
+
+// TODO: Test a long-lived download.
+// TODO: Test a process that dies in the middle of a download.

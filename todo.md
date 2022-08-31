@@ -6,9 +6,12 @@
 - Add pagination to list x
 - Consider race conditions between create operations x
 - gzip contents x
+- Track resource count and total size on admin page x
 - Benchmark sqlite on kadalu
-- Track resource count and total size on admin page
 - Support HEAD verb
+- load shedding
+- better css
+    - on mobile
 - Support storage of different HTTP status codes
 - dark mode
 - include headers in cache key
